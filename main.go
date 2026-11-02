@@ -42,7 +42,7 @@ func loadConfig() (config, error) {
 		frigatePass: os.Getenv("FRIGATE_PASSWORD"),
 		listen:      env("LISTEN_ADDR", ":8091"),
 		token:       os.Getenv("AUTH_TOKEN"),
-		opt:         tools.Options{Allowed: map[string]bool{}, Location: time.Local},
+		opt:         tools.Options{Allowed: map[string]bool{}, Location: time.Local, GridBoxes: true},
 	}
 	if c.frigateURL == "" {
 		return c, errors.New("FRIGATE_URL is required (e.g. https://frigate:8971 or http://frigate:5000)")
@@ -61,6 +61,11 @@ func loadConfig() (config, error) {
 	}
 	if c.timeout, err = duration("FRIGATE_TIMEOUT", "20s"); err != nil || c.timeout <= 0 {
 		return c, errors.New("FRIGATE_TIMEOUT must be a positive duration, e.g. 20s or 1m (bare numbers are seconds)")
+	}
+	if v := os.Getenv("GRID_BOXES"); v != "" {
+		if c.opt.GridBoxes, err = strconv.ParseBool(v); err != nil {
+			return c, errors.New("GRID_BOXES must be true or false")
+		}
 	}
 	if v := os.Getenv("GRID_CAMERA_LABELS"); v != "" {
 		if c.opt.GridCamera, err = strconv.ParseBool(v); err != nil {

@@ -59,7 +59,10 @@ Use get_alert_snapshot with an id for a bigger picture of one.
 It's meant for local vision models, many of which handle one image much better than several, and
 for keeping context small: "show me today's alerts" costs one picture instead of one per alert. The
 grid fits within `SNAPSHOT_HEIGHT` (at least 360 pixels tall, 1080 when `SNAPSHOT_HEIGHT=0`) at 16:9,
-and each picture is fetched from Frigate at its tile size. Pictures keep their shape, so portrait
+and each picture is fetched from Frigate at its tile size. By default each tile is the snapshot of one
+of the item's objects with its box drawn by Frigate (so with several objects, one is boxed), falling
+back to the recorded frame when the camera has no snapshots; `GRID_BOXES=false` uses the recorded
+frame first, like `get_alert_snapshot`. Pictures keep their shape, so portrait
 doorbells and panoramic cameras are letterboxed. An item with no picture gets an empty tile.
 
 If [GenAI review descriptions](https://docs.frigate.video/configuration/genai/genai_review) are configured in
@@ -104,6 +107,7 @@ Use one of Frigate's two API ports:
 | `FRIGATE_TIMEOUT` | `20s` | Limit for each Frigate request |
 | `CAMERAS` | all | Comma-separated allowlist (case-insensitive) |
 | `SNAPSHOT_HEIGHT` | `720` | Image height in pixels; `0` = native. Also the height `get_alerts_grid` fits in |
+| `GRID_BOXES` | `true` | `get_alerts_grid` shows object snapshots with boxes; `false` for plain recorded frames |
 | `GRID_CAMERA_LABELS` | `false` | Also write the camera name on `get_alerts_grid` tiles |
 | `TZ` | UTC | Time zone for times shown to the model, e.g. `America/New_York` |
 | `AUTH_TOKEN` | none | Require `Authorization: Bearer <token>` on `/mcp` |

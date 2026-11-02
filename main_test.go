@@ -465,6 +465,37 @@ func TestAlertsGridLimitAndMissingPictures(t *testing.T) {
 	}
 }
 
+func TestAlertsGridPrefersBoxedSnapshots(t *testing.T) {
+	fake := &fakeFrigate{}
+	cs := start(t, config{opt: tools.Options{GridBoxes: true}}, fake)
+	res := call(t, cs, "get_alerts_grid", nil)
+	if res.IsError || imageOf(res) == nil || strings.Contains(text(res), "no picture") {
+		t.Fatalf("got %s", text(res))
+	}
+	var snaps, frames []string
+	for _, q := range fake.requests {
+		switch {
+		case strings.Contains(q, "/snapshot.jpg") && strings.HasPrefix(q, "/api/events/"):
+			snaps = append(snaps, q)
+		case strings.Contains(q, "/recordings/"):
+			frames = append(frames, q)
+		}
+	}
+	// r-alert2 and r-alert1 have a boxed snapshot (e-a1); r-hidden's object has none, so its
+	// recorded frame is used instead.
+	count := map[string]int{}
+	for _, q := range snaps {
+		count[q]++
+	}
+	if len(snaps) != 3 || count["/api/events/e-a1/snapshot.jpg?bbox=1&height=357"] != 2 ||
+		count["/api/events/e-nosnap/snapshot.jpg?bbox=1&height=357"] != 1 {
+		t.Errorf("snapshot requests: %v", snaps)
+	}
+	if len(frames) != 1 || !strings.HasPrefix(frames[0], "/api/bedroom/recordings/") {
+		t.Errorf("frame requests: %v", frames)
+	}
+}
+
 func TestAlertsGridHonorsAllowlist(t *testing.T) {
 	fake := &fakeFrigate{}
 	cs := start(t, config{opt: tools.Options{Allowed: map[string]bool{"driveway": true}}}, fake)
@@ -618,9 +649,14 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !c.insecureTLS || !c.opt.Allowed["driveway"] || !c.opt.Allowed["front_door"] || c.opt.SnapshotHeight != 720 || c.listen != ":8091" ||
-		c.opt.GridCamera {
+		c.opt.GridCamera || !c.opt.GridBoxes {
 		t.Fatalf("got %+v", c)
 	}
+	t.Setenv("GRID_BOXES", "false")
+	if c, err = loadConfig(); err != nil || c.opt.GridBoxes {
+		t.Fatalf("GRID_BOXES=false: %+v %v", c.opt, err)
+	}
+	t.Setenv("GRID_BOXES", "")
 	t.Setenv("GRID_CAMERA_LABELS", "true")
 	if c, err = loadConfig(); err != nil || !c.opt.GridCamera {
 		t.Fatalf("GRID_CAMERA_LABELS=true: %+v %v", c.opt, err)

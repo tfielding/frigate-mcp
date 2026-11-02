@@ -138,7 +138,7 @@ func (t *Toolset) fetchPictures(ctx context.Context, items []frigate.Review, hei
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			jpg, err := t.reviewPicture(ctx, &items[i], height)
+			jpg, err := t.reviewPicture(ctx, &items[i], height, t.opt.GridBoxes)
 			if err != nil {
 				slog.Warn("get_alerts_grid: no picture", "id", items[i].ID, "err", err)
 				return

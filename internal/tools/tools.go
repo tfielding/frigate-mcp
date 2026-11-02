@@ -31,6 +31,7 @@ type Options struct {
 	Allowed        map[string]bool // lowercased camera names; empty = all cameras
 	SnapshotHeight int             // image height in pixels; 0 = native
 	GridCamera     bool            // show the camera name on get_alerts_grid tiles
+	GridBoxes      bool            // get_alerts_grid prefers object snapshots with boxes over recorded frames
 	Location       *time.Location  // time zone for times shown to the model
 	Now            func() time.Time
 }
@@ -308,7 +309,7 @@ func (t *Toolset) alertSnapshot(ctx context.Context, _ *mcp.CallToolRequest, in 
 		slog.Error("get_alert_snapshot", "id", id, "err", err)
 		return nil, nil, unavailable(err)
 	}
-	jpeg, err := t.reviewPicture(ctx, r, t.opt.SnapshotHeight)
+	jpeg, err := t.reviewPicture(ctx, r, t.opt.SnapshotHeight, false)
 	if err != nil {
 		slog.Warn("get_alert_snapshot: no image", "id", id, "err", err)
 		return nil, nil, fmt.Errorf("no picture available for %s; recordings and snapshots may be off for camera %s", id, r.Camera)
@@ -319,19 +320,43 @@ func (t *Toolset) alertSnapshot(ctx context.Context, _ *mcp.CallToolRequest, in 
 	return imageResult(fmt.Sprintf("%s on %s at %s: %s", capitalize(r.Severity), r.Camera, clock(r.Start.Time, now), what), jpeg), nil, nil
 }
 
-// reviewPicture returns the best picture of a review item: the recorded frame Frigate uses as its
-// thumbnail or, if recordings are off, the snapshot of one of the objects in it.
-func (t *Toolset) reviewPicture(ctx context.Context, r *frigate.Review, height int) ([]byte, error) {
+// maxSnapshotTries bounds how many of a review item's objects are tried for a snapshot, so an item
+// with many objects on a camera without snapshots doesn't cost a request each.
+const maxSnapshotTries = 3
+
+// reviewPicture returns a picture of a review item: the recorded frame Frigate uses as its
+// thumbnail, or the snapshot of one of its objects (with its box drawn by Frigate). snapshotFirst
+// picks which is tried first; the other is the fallback.
+func (t *Toolset) reviewPicture(ctx context.Context, r *frigate.Review, height int, snapshotFirst bool) ([]byte, error) {
 	err := errors.New("no thumbnail time or objects")
-	if r.Data.ThumbTime > 0 {
-		var jpeg []byte
-		if jpeg, err = t.src.RecordingFrame(ctx, r.Camera, r.Data.ThumbTime, height); err == nil {
-			return jpeg, nil
+	frame := func() []byte {
+		if r.Data.ThumbTime <= 0 {
+			return nil
 		}
-	}
-	for _, ev := range r.Data.Detections {
 		var jpeg []byte
-		if jpeg, err = t.src.EventSnapshot(ctx, ev, height); err == nil {
+		if jpeg, err = t.src.RecordingFrame(ctx, r.Camera, r.Data.ThumbTime, height); err != nil {
+			return nil
+		}
+		return jpeg
+	}
+	snapshot := func() []byte {
+		for i, ev := range r.Data.Detections {
+			if i == maxSnapshotTries {
+				break
+			}
+			var jpeg []byte
+			if jpeg, err = t.src.EventSnapshot(ctx, ev, height); err == nil {
+				return jpeg
+			}
+		}
+		return nil
+	}
+	order := []func() []byte{frame, snapshot}
+	if snapshotFirst {
+		order = []func() []byte{snapshot, frame}
+	}
+	for _, get := range order {
+		if jpeg := get(); jpeg != nil {
 			return jpeg, nil
 		}
 	}
