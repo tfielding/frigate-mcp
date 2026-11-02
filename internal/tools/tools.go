@@ -93,21 +93,22 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_alerts",
-		Description: "Summarize recent activity Frigate flagged on the cameras: how many alerts and detections, and a list " +
-			"(newest first) with time, camera, what was seen, zones and an id. Use for questions like \"anything happen today?\". " +
-			"Use get_alert_snapshot with an id to show the picture, or get_alerts_grid to see several at once.",
+		Description: "Text only, no pictures. Summarize recent activity Frigate flagged on the cameras: how many alerts and " +
+			"detections, and a list (newest first) with time, camera, what was seen, zones and an id. Use for questions like " +
+			"\"anything happen today?\" or \"how many alerts?\". To show or see pictures of alerts, use get_alerts_grid instead.",
 		Annotations: readOnly("Frigate alerts"),
 	}, t.alerts)
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_alerts_grid",
-		Description: "Show pictures of the newest alerts as one numbered grid image (up to 9), with a matching list " +
-			"of times, cameras, what was seen and ids. Use for \"show me what happened today\" instead of fetching " +
-			"pictures one by one.",
+		Description: "Show pictures of recent alerts: one image with the newest alerts as a numbered grid (up to 9), plus " +
+			"a matching list of times, cameras, what was seen and ids. Use whenever the user wants to see or be shown alerts, " +
+			"e.g. \"show me today's alerts\" or \"what did the cameras see?\". Takes the same filters as get_alerts.",
 		Annotations: readOnly("Alerts picture grid"),
 	}, t.alertsGrid)
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_alert_snapshot",
-		Description: "Show the picture (JPEG) for one alert or detection from get_alerts.",
+		Name: "get_alert_snapshot",
+		Description: "Show the picture (JPEG) for one alert or detection, by its id from get_alerts or get_alerts_grid. " +
+			"For several alerts at once, use get_alerts_grid.",
 		Annotations: readOnly("Alert snapshot"),
 	}, t.alertSnapshot)
 	mcp.AddTool(s, &mcp.Tool{
