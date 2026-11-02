@@ -159,21 +159,22 @@ func TestTileLabel(t *testing.T) {
 	r := frigate.Review{Camera: "front_door"}
 	r.Data.Objects = []string{"person", "car", "person"}
 	for in, want := range map[time.Time]string{
-		time.Date(2026, 11, 1, 14, 12, 0, 0, time.UTC): "3) 2:12pm (person, car)",
-		time.Date(2026, 11, 1, 0, 5, 0, 0, time.UTC):   "3) 12:05am (person, car)",
-		time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC):  "3) 9:30am (person, car)",
+		time.Date(2026, 11, 1, 14, 12, 0, 0, time.UTC): "3) 14:12 (person, car)",
+		time.Date(2026, 11, 1, 0, 5, 0, 0, time.UTC):   "3) 00:05 (person, car)",
+		time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC):  "3) 09:30 (person, car)",
 	} {
 		r.Start = frigate.Time{Time: in}
 		if got := tileLabel(3, r, time.UTC, false); got != want {
 			t.Errorf("tileLabel(%v) = %q, want %q", in, got, want)
 		}
 	}
-	if got := tileLabel(1, r, time.UTC, true); got != "1) 9:30am front_door (person, car)" {
+	r.Start = frigate.Time{Time: time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC)}
+	if got := tileLabel(1, r, time.UTC, true); got != "1) 09:30 front_door (person, car)" {
 		t.Errorf("with camera: %q", got)
 	}
 	toronto, _ := time.LoadLocation("America/Toronto") // EST from 1 Nov 2026
 	r.Data.Objects = nil
-	if got := tileLabel(1, r, toronto, false); got != "1) 4:30am" {
+	if got := tileLabel(1, r, toronto, false); got != "1) 04:30" {
 		t.Errorf("in Toronto, no objects: %q", got)
 	}
 }

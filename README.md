@@ -44,7 +44,7 @@ Use get_alert_snapshot with an id to show the picture.
 are off it falls back to the snapshot of an object in it.
 
 `get_alerts_grid` puts those pictures for several items into one image, each tile labelled with its
-number, time and what was seen (e.g. `3) 2:12pm (person, car)`), and the camera name too with
+number, time and what was seen (e.g. `3) 14:12 (person, car)`), and the camera name too with
 `GRID_CAMERA_LABELS=true`:
 
 ```

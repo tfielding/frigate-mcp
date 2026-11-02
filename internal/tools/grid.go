@@ -104,10 +104,10 @@ func (t *Toolset) alertsGrid(ctx context.Context, _ *mcp.CallToolRequest, in Gri
 	return imageResult(b.String(), jpg), nil, nil
 }
 
-// tileLabel is the text on a tile: number, time and what was seen, e.g. "3) 2:12pm (person, car)",
+// tileLabel is the text on a tile: number, 24-hour time and what was seen, e.g. "3) 14:12 (person, car)",
 // with the camera before the objects if asked for. It's kept short; the list has the full date.
 func tileLabel(n int, r frigate.Review, loc *time.Location, camera bool) string {
-	s := fmt.Sprintf("%d) %s", n, r.Start.In(loc).Format("3:04pm"))
+	s := fmt.Sprintf("%d) %s", n, r.Start.In(loc).Format("15:04"))
 	if camera {
 		s += " " + r.Camera
 	}
