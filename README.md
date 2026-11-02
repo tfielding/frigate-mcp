@@ -19,6 +19,7 @@ Tested against Frigate 0.18.
 | Tool | Input | Returns |
 |---|---|---|
 | `get_alerts` | optional `severity` (`alert` default, `detection`, `all`), `camera`, `since`, `limit` | Counts of alerts and detections, then a list, newest first |
+| `get_alerts_grid` | optional `severity`, `camera`, `since`, `limit` (default 6, at most 9) | One numbered grid picture of the newest items (JPEG), plus the same list as `get_alerts` with matching numbers |
 | `get_alert_snapshot` | `id` from `get_alerts` | The picture for that item (JPEG) |
 | `list_events` | optional `camera`, `label`, `zone`, `since`, `limit` | Tracked objects, newest first |
 | `get_event_snapshot` | `id` from `list_events` / `search_events` | The object's saved snapshot with its box drawn (JPEG) |
@@ -41,6 +42,24 @@ Use get_alert_snapshot with an id to show the picture.
 
 `get_alert_snapshot` returns the recorded frame Frigate uses as the item's thumbnail; if recordings
 are off it falls back to the snapshot of an object in it.
+
+`get_alerts_grid` puts those pictures for several items into one image, each tile labelled with its
+number, time and camera:
+
+```
+Last 24 hours, all cameras: 3 alerts, 12 detections. Times are EST.
+Pictures numbered as in the grid (left to right, top to bottom), newest first:
+1. today 14:12 (40s), front_door: person, car; zones: porch, street; id 1761925920.5-ab12cd
+2. today 02:14 (1m05s), driveway: person; zones: driveway; id 1761884040.1-ef34gh
+3. yesterday 18:30 (12s), backyard: dog; id 1761863400.9-ij56kl
+Use get_alert_snapshot with an id for a bigger picture of one.
+```
+
+It's meant for local vision models, many of which handle one image much better than several, and
+for keeping context small: "show me today's alerts" costs one picture instead of one per alert. The
+grid fits within `SNAPSHOT_HEIGHT` (at least 360 pixels tall, 1080 when `SNAPSHOT_HEIGHT=0`) at 16:9,
+and each picture is fetched from Frigate at its tile size. Pictures keep their shape, so portrait
+doorbells and panoramic cameras are letterboxed. An item with no picture gets an empty tile.
 
 If [GenAI review descriptions](https://docs.frigate.video/configuration/genai/genai_review) are configured in
 Frigate, each item also gets Frigate's own title, summary and threat level. Without them, the list
@@ -83,7 +102,7 @@ Use one of Frigate's two API ports:
 | `FRIGATE_TLS_INSECURE` | `false` | Accept Frigate's self-signed certificate |
 | `FRIGATE_TIMEOUT` | `20s` | Limit for each Frigate request |
 | `CAMERAS` | all | Comma-separated allowlist (case-insensitive) |
-| `SNAPSHOT_HEIGHT` | `720` | Image height in pixels; `0` = native |
+| `SNAPSHOT_HEIGHT` | `720` | Image height in pixels; `0` = native. Also the height `get_alerts_grid` fits in |
 | `TZ` | UTC | Time zone for times shown to the model, e.g. `America/New_York` |
 | `AUTH_TOKEN` | none | Require `Authorization: Bearer <token>` on `/mcp` |
 | `LISTEN_ADDR` | `:8091` | |

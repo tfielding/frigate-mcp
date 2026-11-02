@@ -1,8 +1,14 @@
 package tools
 
 import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"testing"
 	"time"
+
+	"golang.org/x/image/draw"
 
 	"github.com/tfielding/frigate-mcp/internal/frigate"
 )
@@ -82,5 +88,69 @@ func TestCatalogMatching(t *testing.T) {
 	}
 	if _, err := cat.zone("porch"); err == nil || err.Error() != `unknown zone "porch"; no zones are configured` {
 		t.Errorf("zone: %v", err)
+	}
+}
+
+func TestGridLayout(t *testing.T) {
+	for _, tc := range []struct{ n, maxH, cols, rows, w, h int }{
+		{1, 720, 1, 1, 1280, 720},
+		{2, 720, 2, 1, 1280, 358},
+		{4, 720, 2, 2, 1276, 718},
+		{6, 720, 3, 2, 1280, 480},
+		{9, 720, 3, 3, 1271, 716},
+		{9, 1080, 3, 3, 1910, 1076},
+	} {
+		l := newLayout(tc.n, tc.maxH)
+		w, h := l.size()
+		if l.cols != tc.cols || l.rows != tc.rows || w != tc.w || h != tc.h {
+			t.Errorf("%d tiles in %d: %dx%d grid, %dx%d px", tc.n, tc.maxH, l.cols, l.rows, w, h)
+		}
+		if w > tc.maxH*16/9 || h > tc.maxH {
+			t.Errorf("%d tiles: %dx%d doesn't fit", tc.n, w, h)
+		}
+	}
+}
+
+func TestFit(t *testing.T) {
+	cell := image.Rect(100, 0, 740, 360) // 640x360
+	for _, tc := range []struct {
+		src  image.Rectangle
+		want image.Rectangle
+	}{
+		{image.Rect(0, 0, 1920, 1080), image.Rect(100, 0, 740, 360)}, // same shape: fills it
+		{image.Rect(0, 0, 1080, 1920), image.Rect(319, 0, 521, 360)}, // portrait doorbell: centered
+		{image.Rect(0, 0, 3200, 900), image.Rect(100, 90, 740, 270)}, // panoramic: letterboxed
+	} {
+		if got := fit(tc.src, cell); got != tc.want {
+			t.Errorf("fit(%v) = %v, want %v", tc.src, got, tc.want)
+		}
+	}
+}
+
+func TestRenderDrawsPicturesAndLabels(t *testing.T) {
+	blue := image.NewUniform(color.RGBA{0, 0, 255, 255})
+	pic := image.NewRGBA(image.Rect(0, 0, 320, 180))
+	draw.Draw(pic, pic.Bounds(), blue, image.Point{}, draw.Src)
+	l := newLayout(2, 720)
+	b, err := l.render([]image.Image{pic, nil}, []string{"1  today 14:12  front_door", "2  today 02:14  driveway"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := jpeg.Decode(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	isBlue := func(x, y int) bool {
+		r, g, bl, _ := img.At(x, y).RGBA()
+		return bl > 0xc000 && r < 0x4000 && g < 0x4000
+	}
+	if !isBlue(l.cellW/2, l.cellH-10) {
+		t.Error("first tile isn't the picture")
+	}
+	if isBlue(l.cellW+gridGap+l.cellW/2, l.cellH-10) {
+		t.Error("missing picture drawn")
+	}
+	if isBlue(2, 2) {
+		t.Error("no label in the first tile's corner")
 	}
 }

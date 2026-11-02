@@ -2,7 +2,10 @@ module github.com/tfielding/frigate-mcp
 
 go 1.25.0
 
-require github.com/modelcontextprotocol/go-sdk v1.8.0
+require (
+	github.com/modelcontextprotocol/go-sdk v1.8.0
+	golang.org/x/image v0.40.0
+)
 
 require (
 	github.com/google/jsonschema-go v0.4.3 // indirect

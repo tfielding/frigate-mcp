@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -19,9 +23,23 @@ import (
 )
 
 var (
-	fakeJPEG = []byte{0xFF, 0xD8, 0xFF, 0xE0, 'f', 'a', 'k', 'e', 0xFF, 0xD9}
+	fakeJPEG = solidJPEG(160, 90, color.RGBA{0, 0, 255, 255})
 	now      = time.Date(2026, 11, 1, 15, 0, 0, 0, time.UTC)
 )
+
+func solidJPEG(w, h int, c color.Color) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			img.Set(x, y, c)
+		}
+	}
+	var b bytes.Buffer
+	if err := jpeg.Encode(&b, img, nil); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
+}
 
 func ts(hoursAgo float64) float64 {
 	return float64(now.Add(-time.Duration(hoursAgo*float64(time.Hour))).UnixNano()) / 1e9
@@ -71,13 +89,13 @@ func (f *fakeFrigate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		    "old_cam":    {"enabled": false, "objects": {"track": ["bird"]}}
 		  }}`, f.semantic)
 	case p == "/api/review":
-		w.Write(mustJSON([]map[string]any{
+		w.Write(mustJSON(after(r, []map[string]any{
 			review("r-detect", "driveway", "detection", ts(1), ts(0.99), []string{"car"}, nil, nil),
 			review("r-alert1", "driveway", "alert", ts(12.75), ts(12.74), []string{"person"}, []string{"driveway"}, nil),
 			review("r-alert2", "front_door", "alert", ts(4), 0, []string{"person", "car", "person"}, []string{"porch", "street"},
 				map[string]any{"title": "Courier drops off a package", "shortSummary": "A courier walks up to the porch, leaves a box and returns to a van.", "potential_threat_level": 0}),
-			review("r-hidden", "bedroom", "alert", ts(2), ts(1.9), []string{"person"}, nil, nil),
-		}))
+			review("r-hidden", "bedroom", "alert", ts(2), ts(1.9), []string{"person"}, nil, nil, "e-nosnap"),
+		})))
 	case p == "/api/review/r-alert1":
 		w.Write(mustJSON(review("r-alert1", "driveway", "alert", ts(12.75), ts(12.74), []string{"person"}, []string{"driveway"}, nil)))
 	case p == "/api/review/r-hidden":
@@ -102,10 +120,26 @@ func (f *fakeFrigate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func review(id, cam, sev string, start, end float64, objects, zones []string, meta map[string]any) map[string]any {
+// after keeps the items that started after the request's "after" parameter, like Frigate.
+func after(r *http.Request, items []map[string]any) []map[string]any {
+	from, _ := strconv.ParseFloat(r.URL.Query().Get("after"), 64)
+	out := []map[string]any{}
+	for _, it := range items {
+		if it["start_time"].(float64) >= from {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// review builds a review item whose objects are detections (default e-a1, which has a snapshot).
+func review(id, cam, sev string, start, end float64, objects, zones []string, meta map[string]any, detections ...string) map[string]any {
+	if len(detections) == 0 {
+		detections = []string{"e-a1"}
+	}
 	r := map[string]any{"id": id, "camera": cam, "severity": sev, "start_time": start, "end_time": nil,
 		"has_been_reviewed": false, "thumb_path": "/media/frigate/clips/review/thumb-" + id + ".webp",
-		"data": map[string]any{"detections": []string{"e-a1"}, "objects": objects, "sub_labels": []string{},
+		"data": map[string]any{"detections": detections, "objects": objects, "sub_labels": []string{},
 			"zones": zones, "audio": []string{}, "thumb_time": start + 2, "metadata": meta}}
 	if end > 0 {
 		r["end_time"] = end
@@ -196,7 +230,7 @@ func text(res *mcp.CallToolResult) string {
 	return sb.String()
 }
 
-func image(res *mcp.CallToolResult) []byte {
+func imageOf(res *mcp.CallToolResult) []byte {
 	for _, c := range res.Content {
 		if ic, ok := c.(*mcp.ImageContent); ok {
 			return ic.Data
@@ -223,7 +257,7 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) map[string]bool {
 
 func TestToolsAreListedReadOnly(t *testing.T) {
 	names := toolNames(t, start(t, config{}, nil))
-	want := []string{"get_alerts", "get_alert_snapshot", "list_events", "get_event_snapshot"}
+	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "list_events", "get_event_snapshot"}
 	for _, n := range want {
 		if !names[n] {
 			t.Errorf("missing %s", n)
@@ -294,7 +328,7 @@ func TestAllowlistHidesCameras(t *testing.T) {
 		t.Errorf("allowlist not passed to frigate: %s", q)
 	}
 	res := call(t, cs, "get_alert_snapshot", map[string]any{"id": "r-hidden"})
-	if !res.IsError || image(res) != nil || !strings.Contains(text(res), `no alert or detection with id "r-hidden"`) {
+	if !res.IsError || imageOf(res) != nil || !strings.Contains(text(res), `no alert or detection with id "r-hidden"`) {
 		t.Fatalf("hidden camera's alert served: %s", text(res))
 	}
 	res = call(t, cs, "get_alerts", map[string]any{"camera": "bedroom"})
@@ -320,7 +354,7 @@ func TestAlertSnapshot(t *testing.T) {
 	fake := &fakeFrigate{}
 	cs := start(t, config{}, fake)
 	res := call(t, cs, "get_alert_snapshot", map[string]any{"id": "r-alert1"})
-	if res.IsError || string(image(res)) != string(fakeJPEG) || text(res) != "Alert on driveway at today 02:15: person" {
+	if res.IsError || string(imageOf(res)) != string(fakeJPEG) || text(res) != "Alert on driveway at today 02:15: person" {
 		t.Fatalf("got %s", text(res))
 	}
 	if q := fake.requests[len(fake.requests)-1]; !strings.HasPrefix(q, "/api/driveway/recordings/"+strconv.FormatFloat(ts(12.75)+2, 'f', 3, 64)+"/snapshot.jpg?height=720") {
@@ -332,7 +366,7 @@ func TestAlertSnapshotFallsBackToEventSnapshot(t *testing.T) {
 	fake := &fakeFrigate{noRecs: true}
 	cs := start(t, config{}, fake)
 	res := call(t, cs, "get_alert_snapshot", map[string]any{"id": "r-alert1"})
-	if res.IsError || image(res) == nil {
+	if res.IsError || imageOf(res) == nil {
 		t.Fatalf("got %s", text(res))
 	}
 	if q := fake.requests[len(fake.requests)-1]; q != "/api/events/e-a1/snapshot.jpg?bbox=1&height=720" {
@@ -341,6 +375,107 @@ func TestAlertSnapshotFallsBackToEventSnapshot(t *testing.T) {
 	res = call(t, cs, "get_alert_snapshot", map[string]any{"id": "nope"})
 	if !res.IsError || !strings.Contains(text(res), "get ids from get_alerts") {
 		t.Fatalf("got %s", text(res))
+	}
+}
+
+func decodeJPEG(t *testing.T, b []byte) image.Image {
+	t.Helper()
+	img, err := jpeg.Decode(bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("not a JPEG: %v", err)
+	}
+	return img
+}
+
+func TestAlertsGrid(t *testing.T) {
+	fake := &fakeFrigate{}
+	cs := start(t, config{}, fake)
+	res := call(t, cs, "get_alerts_grid", nil)
+	got := text(res)
+	if res.IsError {
+		t.Fatalf("error: %s", got)
+	}
+	for _, s := range []string{
+		"Last 24 hours, all cameras: 3 alerts, 1 detection. Times are UTC.\n",
+		"Pictures numbered as in the grid (left to right, top to bottom), newest first:\n",
+		"1. today 13:00 (6m00s), bedroom: person; id r-hidden\n",
+		"2. today 11:00 (ongoing), front_door: person, car; zones: porch, street; id r-alert2\n",
+		"  Frigate's description: Courier drops off a package.",
+		"3. today 02:15 (36s), driveway: person; zones: driveway; id r-alert1\n",
+		"Use get_alert_snapshot with an id for a bigger picture of one.\n",
+	} {
+		if !strings.Contains(got, s) {
+			t.Errorf("missing %q in:\n%s", s, got)
+		}
+	}
+	if strings.Contains(got, "r-detect") || strings.Contains(got, "no picture") {
+		t.Errorf("unexpected content:\n%s", got)
+	}
+	// 3 pictures: a 2x2 grid of 16:9 tiles within 1280x720.
+	if b := decodeJPEG(t, imageOf(res)).Bounds(); b.Dx() != 1276 || b.Dy() != 718 {
+		t.Errorf("grid size %v", b)
+	}
+	// Each tile's frame is asked for at the tile height, not the full snapshot height.
+	frames := 0
+	for _, q := range fake.requests {
+		if strings.Contains(q, "/recordings/") {
+			frames++
+			if !strings.HasSuffix(q, "?height=357") {
+				t.Errorf("frame request %s", q)
+			}
+		}
+	}
+	if frames != 3 {
+		t.Errorf("%d frame requests", frames)
+	}
+}
+
+func TestAlertsGridLimitAndMissingPictures(t *testing.T) {
+	cs := start(t, config{}, &fakeFrigate{noRecs: true})
+	res := call(t, cs, "get_alerts_grid", map[string]any{"severity": "all", "limit": 2})
+	got := text(res)
+	// Without recordings, r-hidden's object has no snapshot; the others fall back to e-a1's.
+	for _, s := range []string{
+		"Pictures of the newest 2 of 4, numbered as in the grid",
+		"1. today 14:00 (36s), driveway: detection, car; id r-detect\n",
+		"2. today 13:00 (6m00s), bedroom: alert, person; id r-hidden\n",
+		"1 item has no picture (shown as an empty tile).\n",
+	} {
+		if !strings.Contains(got, s) {
+			t.Errorf("missing %q in:\n%s", s, got)
+		}
+	}
+	if b := decodeJPEG(t, imageOf(res)).Bounds(); b.Dx() != 1280 || b.Dy() != 358 {
+		t.Errorf("grid size %v", b)
+	}
+
+	// Only bedroom visible: its one alert has no picture, so no image is returned at all.
+	bedroom := start(t, config{opt: tools.Options{Allowed: map[string]bool{"bedroom": true}}}, &fakeFrigate{noRecs: true})
+	res = call(t, bedroom, "get_alerts_grid", nil)
+	if res.IsError || imageOf(res) != nil || !strings.Contains(text(res), "No pictures are available for these") {
+		t.Fatalf("got %s", text(res))
+	}
+	res = call(t, cs, "get_alerts_grid", map[string]any{"since": "30m"})
+	if res.IsError || imageOf(res) != nil || !strings.Contains(text(res), "Nothing to show.") {
+		t.Fatalf("got %s", text(res))
+	}
+	res = call(t, cs, "get_alerts_grid", map[string]any{"severity": "loud"})
+	if !res.IsError || !strings.Contains(text(res), "use alert, detection or all") {
+		t.Fatalf("got %s", text(res))
+	}
+}
+
+func TestAlertsGridHonorsAllowlist(t *testing.T) {
+	fake := &fakeFrigate{}
+	cs := start(t, config{opt: tools.Options{Allowed: map[string]bool{"driveway": true}}}, fake)
+	got := text(call(t, cs, "get_alerts_grid", map[string]any{"severity": "all"}))
+	if strings.Contains(got, "bedroom") || strings.Contains(got, "front_door") || !strings.Contains(got, "2. today 02:15") {
+		t.Fatalf("got:\n%s", got)
+	}
+	for _, q := range fake.requests {
+		if strings.Contains(q, "/api/bedroom/") || strings.Contains(q, "/api/front_door/") {
+			t.Errorf("hidden camera's picture fetched: %s", q)
+		}
 	}
 }
 
@@ -374,7 +509,7 @@ func TestListEvents(t *testing.T) {
 func TestEventSnapshot(t *testing.T) {
 	cs := start(t, config{}, nil)
 	res := call(t, cs, "get_event_snapshot", map[string]any{"id": "e-car"})
-	if res.IsError || image(res) == nil || text(res) != "Car on driveway at today 14:00" {
+	if res.IsError || imageOf(res) == nil || text(res) != "Car on driveway at today 14:00" {
 		t.Fatalf("got %s", text(res))
 	}
 	res = call(t, cs, "get_event_snapshot", map[string]any{"id": "e-person"})

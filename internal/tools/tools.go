@@ -95,9 +95,16 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 		Name: "get_alerts",
 		Description: "Summarize recent activity Frigate flagged on the cameras: how many alerts and detections, and a list " +
 			"(newest first) with time, camera, what was seen, zones and an id. Use for questions like \"anything happen today?\". " +
-			"Use get_alert_snapshot with an id to show the picture.",
+			"Use get_alert_snapshot with an id to show the picture, or get_alerts_grid to see several at once.",
 		Annotations: readOnly("Frigate alerts"),
 	}, t.alerts)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_alerts_grid",
+		Description: "Show pictures of the newest alerts as one numbered grid image (up to 9), with a matching list " +
+			"of times, cameras, what was seen and ids. Use for \"show me what happened today\" instead of fetching " +
+			"pictures one by one.",
+		Annotations: readOnly("Alerts picture grid"),
+	}, t.alertsGrid)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_alert_snapshot",
 		Description: "Show the picture (JPEG) for one alert or detection from get_alerts.",
@@ -166,64 +173,19 @@ func readOnly(title string) *mcp.ToolAnnotations {
 }
 
 func (t *Toolset) alerts(ctx context.Context, _ *mcp.CallToolRequest, in AlertsInput) (*mcp.CallToolResult, any, error) {
-	cat, err := t.cat.get(ctx)
-	if err != nil {
-		return nil, nil, unavailable(err)
-	}
-	severity := strings.ToLower(strings.TrimSpace(in.Severity))
-	switch severity {
-	case "", "alert", "alerts":
-		severity = "alert"
-	case "detection", "detections":
-		severity = "detection"
-	case "all", "both", "any":
-		severity = "all"
-	default:
-		return nil, nil, fmt.Errorf("severity %q not understood; use alert, detection or all", in.Severity)
-	}
-	now := t.opt.Now().In(t.opt.Location)
-	after, before, period, err := window(in.Since, "24h", now)
+	sel, err := t.selectReviews(ctx, in.Severity, in.Camera, in.Since)
 	if err != nil {
 		return nil, nil, err
 	}
-	cams, err := cat.filterCameras(in.Camera, len(t.opt.Allowed) > 0)
-	if err != nil {
-		return nil, nil, err
-	}
-	// One query for both severities, so the counts cover everything even when only alerts are listed.
-	items, err := t.src.Reviews(ctx, frigate.Filter{Cameras: cams, After: after, Before: before}, "")
-	if err != nil {
-		slog.Error("get_alerts", "err", err)
-		return nil, nil, unavailable(err)
-	}
-	var alerts, detections int
-	var shown []frigate.Review
-	for _, r := range items {
-		if !cat.visible(r.Camera) {
-			continue
-		}
-		if r.Severity == "alert" {
-			alerts++
-		} else {
-			detections++
-		}
-		if severity == "all" || r.Severity == severity {
-			shown = append(shown, r)
-		}
-	}
+	shown := sel.shown
 	limit := clamp(in.Limit, defaultLimit, maxLimit)
 
 	var b strings.Builder
-	where := "all cameras"
-	if in.Camera != "" {
-		where = cams[0]
-	}
-	fmt.Fprintf(&b, "%s, %s: %s, %s. Times are %s.\n", capitalize(period), where,
-		plural(alerts, "alert"), plural(detections, "detection"), now.Format("MST"))
+	b.WriteString(sel.header())
 	if len(shown) == 0 {
 		fmt.Fprintf(&b, "Nothing to list.\n")
 	} else {
-		kind := map[string]string{"alert": "Alerts", "detection": "Detections", "all": "Alerts and detections"}[severity]
+		kind := map[string]string{"alert": "Alerts", "detection": "Detections", "all": "Alerts and detections"}[sel.severity]
 		if len(shown) > limit {
 			fmt.Fprintf(&b, "%s (newest %d of %d):\n", kind, limit, len(shown))
 			shown = shown[:limit]
@@ -231,12 +193,66 @@ func (t *Toolset) alerts(ctx context.Context, _ *mcp.CallToolRequest, in AlertsI
 			fmt.Fprintf(&b, "%s (newest first):\n", kind)
 		}
 		for _, r := range shown {
-			b.WriteString(reviewLine(r, severity == "all", now))
+			b.WriteString(reviewLine(r, sel.severity == "all", sel.now))
 		}
-		b.WriteString("Use get_alert_snapshot with an id to show the picture.\n")
+		b.WriteString("Use get_alert_snapshot with an id to show the picture, or get_alerts_grid to see several at once.\n")
 	}
-	slog.Info("get_alerts", "severity", severity, "since", period, "alerts", alerts, "detections", detections, "listed", len(shown))
+	slog.Info("get_alerts", "severity", sel.severity, "since", sel.period, "alerts", sel.alerts, "detections", sel.detections, "listed", len(shown))
 	return text(b.String()), nil, nil
+}
+
+// selectReviews runs the review query behind get_alerts and get_alerts_grid: counts of both
+// severities over the window, and the items of the requested severity, newest first.
+func (t *Toolset) selectReviews(ctx context.Context, severityArg, camera, since string) (reviewSelection, error) {
+	var sel reviewSelection
+	cat, err := t.cat.get(ctx)
+	if err != nil {
+		return sel, unavailable(err)
+	}
+	switch strings.ToLower(strings.TrimSpace(severityArg)) {
+	case "", "alert", "alerts":
+		sel.severity = "alert"
+	case "detection", "detections":
+		sel.severity = "detection"
+	case "all", "both", "any":
+		sel.severity = "all"
+	default:
+		return sel, fmt.Errorf("severity %q not understood; use alert, detection or all", severityArg)
+	}
+	sel.now = t.opt.Now().In(t.opt.Location)
+	after, before, period, err := window(since, "24h", sel.now)
+	if err != nil {
+		return sel, err
+	}
+	sel.period = period
+	cams, err := cat.filterCameras(camera, len(t.opt.Allowed) > 0)
+	if err != nil {
+		return sel, err
+	}
+	sel.where = "all cameras"
+	if camera != "" {
+		sel.where = cams[0]
+	}
+	// One query for both severities, so the counts cover everything even when only alerts are listed.
+	items, err := t.src.Reviews(ctx, frigate.Filter{Cameras: cams, After: after, Before: before}, "")
+	if err != nil {
+		slog.Error("review query", "err", err)
+		return sel, unavailable(err)
+	}
+	for _, r := range items {
+		if !cat.visible(r.Camera) {
+			continue
+		}
+		if r.Severity == "alert" {
+			sel.alerts++
+		} else {
+			sel.detections++
+		}
+		if sel.severity == "all" || r.Severity == sel.severity {
+			sel.shown = append(sel.shown, r)
+		}
+	}
+	return sel, nil
 }
 
 func reviewLine(r frigate.Review, showSeverity bool, now time.Time) string {
@@ -290,26 +306,34 @@ func (t *Toolset) alertSnapshot(ctx context.Context, _ *mcp.CallToolRequest, in 
 		slog.Error("get_alert_snapshot", "id", id, "err", err)
 		return nil, nil, unavailable(err)
 	}
-	// The recorded frame Frigate uses as the review thumbnail is the best picture; if recordings
-	// are off, fall back to the snapshot of one of the objects in it.
-	var jpeg []byte
-	if r.Data.ThumbTime > 0 {
-		jpeg, err = t.src.RecordingFrame(ctx, r.Camera, r.Data.ThumbTime, t.opt.SnapshotHeight)
-	}
-	for _, ev := range r.Data.Detections {
-		if jpeg != nil {
-			break
-		}
-		jpeg, err = t.src.EventSnapshot(ctx, ev, t.opt.SnapshotHeight)
-	}
-	if jpeg == nil {
+	jpeg, err := t.reviewPicture(ctx, r, t.opt.SnapshotHeight)
+	if err != nil {
 		slog.Warn("get_alert_snapshot: no image", "id", id, "err", err)
 		return nil, nil, fmt.Errorf("no picture available for %s; recordings and snapshots may be off for camera %s", id, r.Camera)
 	}
 	now := t.opt.Now().In(t.opt.Location)
 	what := strings.Join(dedupe(r.Data.Objects), ", ")
 	slog.Info("get_alert_snapshot", "id", id, "camera", r.Camera, "bytes", len(jpeg))
-	return image(fmt.Sprintf("%s on %s at %s: %s", capitalize(r.Severity), r.Camera, clock(r.Start.Time, now), what), jpeg), nil, nil
+	return imageResult(fmt.Sprintf("%s on %s at %s: %s", capitalize(r.Severity), r.Camera, clock(r.Start.Time, now), what), jpeg), nil, nil
+}
+
+// reviewPicture returns the best picture of a review item: the recorded frame Frigate uses as its
+// thumbnail or, if recordings are off, the snapshot of one of the objects in it.
+func (t *Toolset) reviewPicture(ctx context.Context, r *frigate.Review, height int) ([]byte, error) {
+	err := errors.New("no thumbnail time or objects")
+	if r.Data.ThumbTime > 0 {
+		var jpeg []byte
+		if jpeg, err = t.src.RecordingFrame(ctx, r.Camera, r.Data.ThumbTime, height); err == nil {
+			return jpeg, nil
+		}
+	}
+	for _, ev := range r.Data.Detections {
+		var jpeg []byte
+		if jpeg, err = t.src.EventSnapshot(ctx, ev, height); err == nil {
+			return jpeg, nil
+		}
+	}
+	return nil, err
 }
 
 func (t *Toolset) events(ctx context.Context, _ *mcp.CallToolRequest, in EventsInput) (*mcp.CallToolResult, any, error) {
@@ -430,7 +454,7 @@ func (t *Toolset) eventSnapshot(ctx context.Context, _ *mcp.CallToolRequest, in 
 	}
 	now := t.opt.Now().In(t.opt.Location)
 	slog.Info("get_event_snapshot", "id", id, "camera", e.Camera, "bytes", len(jpeg))
-	return image(fmt.Sprintf("%s on %s at %s", capitalize(e.Label), e.Camera, clock(e.Start.Time, now)), jpeg), nil, nil
+	return imageResult(fmt.Sprintf("%s on %s at %s", capitalize(e.Label), e.Camera, clock(e.Start.Time, now)), jpeg), nil, nil
 }
 
 func (t *Toolset) searchEvents(ctx context.Context, _ *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, any, error) {
@@ -498,7 +522,7 @@ func text(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}
 }
 
-func image(caption string, jpeg []byte) *mcp.CallToolResult {
+func imageResult(caption string, jpeg []byte) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{
 		&mcp.TextContent{Text: caption},
 		&mcp.ImageContent{Data: jpeg, MIMEType: "image/jpeg"},
