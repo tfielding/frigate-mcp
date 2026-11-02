@@ -62,6 +62,11 @@ func loadConfig() (config, error) {
 	if c.timeout, err = duration("FRIGATE_TIMEOUT", "20s"); err != nil || c.timeout <= 0 {
 		return c, errors.New("FRIGATE_TIMEOUT must be a positive duration, e.g. 20s or 1m (bare numbers are seconds)")
 	}
+	if v := os.Getenv("GRID_CAMERA_LABELS"); v != "" {
+		if c.opt.GridCamera, err = strconv.ParseBool(v); err != nil {
+			return c, errors.New("GRID_CAMERA_LABELS must be true or false")
+		}
+	}
 	if v := os.Getenv("FRIGATE_TLS_INSECURE"); v != "" {
 		if c.insecureTLS, err = strconv.ParseBool(v); err != nil {
 			return c, errors.New("FRIGATE_TLS_INSECURE must be true or false")

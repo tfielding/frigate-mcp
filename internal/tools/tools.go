@@ -30,6 +30,7 @@ type Source interface {
 type Options struct {
 	Allowed        map[string]bool // lowercased camera names; empty = all cameras
 	SnapshotHeight int             // image height in pixels; 0 = native
+	GridCamera     bool            // show the camera name on get_alerts_grid tiles
 	Location       *time.Location  // time zone for times shown to the model
 	Now            func() time.Time
 }

@@ -44,7 +44,8 @@ Use get_alert_snapshot with an id to show the picture.
 are off it falls back to the snapshot of an object in it.
 
 `get_alerts_grid` puts those pictures for several items into one image, each tile labelled with its
-number, time and camera:
+number, time and what was seen (e.g. `3) 2:12pm (person, car)`), and the camera name too with
+`GRID_CAMERA_LABELS=true`:
 
 ```
 Last 24 hours, all cameras: 3 alerts, 12 detections. Times are EST.
@@ -103,6 +104,7 @@ Use one of Frigate's two API ports:
 | `FRIGATE_TIMEOUT` | `20s` | Limit for each Frigate request |
 | `CAMERAS` | all | Comma-separated allowlist (case-insensitive) |
 | `SNAPSHOT_HEIGHT` | `720` | Image height in pixels; `0` = native. Also the height `get_alerts_grid` fits in |
+| `GRID_CAMERA_LABELS` | `false` | Also write the camera name on `get_alerts_grid` tiles |
 | `TZ` | UTC | Time zone for times shown to the model, e.g. `America/New_York` |
 | `AUTH_TOKEN` | none | Require `Authorization: Bearer <token>` on `/mcp` |
 | `LISTEN_ADDR` | `:8091` | |

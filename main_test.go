@@ -617,9 +617,19 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.insecureTLS || !c.opt.Allowed["driveway"] || !c.opt.Allowed["front_door"] || c.opt.SnapshotHeight != 720 || c.listen != ":8091" {
+	if !c.insecureTLS || !c.opt.Allowed["driveway"] || !c.opt.Allowed["front_door"] || c.opt.SnapshotHeight != 720 || c.listen != ":8091" ||
+		c.opt.GridCamera {
 		t.Fatalf("got %+v", c)
 	}
+	t.Setenv("GRID_CAMERA_LABELS", "true")
+	if c, err = loadConfig(); err != nil || !c.opt.GridCamera {
+		t.Fatalf("GRID_CAMERA_LABELS=true: %+v %v", c.opt, err)
+	}
+	t.Setenv("GRID_CAMERA_LABELS", "maybe")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("GRID_CAMERA_LABELS=maybe accepted")
+	}
+	t.Setenv("GRID_CAMERA_LABELS", "")
 	t.Setenv("SNAPSHOT_HEIGHT", "-1")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("negative SNAPSHOT_HEIGHT accepted")

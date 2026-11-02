@@ -91,10 +91,9 @@ func (t *Toolset) alertsGrid(ctx context.Context, _ *mcp.CallToolRequest, in Gri
 	}
 	b.WriteString("Use get_alert_snapshot with an id for a bigger picture of one.\n")
 
-	// Tile labels are kept short so they stay large; the list above has the full date.
 	labels := make([]string, len(shown))
 	for i, r := range shown {
-		labels[i] = fmt.Sprintf("%d  %s  %s", i+1, r.Start.In(sel.now.Location()).Format("15:04"), r.Camera)
+		labels[i] = tileLabel(i+1, r, sel.now.Location(), t.opt.GridCamera)
 	}
 	jpg, err := l.render(pics, labels)
 	if err != nil {
@@ -103,6 +102,19 @@ func (t *Toolset) alertsGrid(ctx context.Context, _ *mcp.CallToolRequest, in Gri
 	}
 	slog.Info("get_alerts_grid", "since", sel.period, "shown", len(shown), "missing", missing, "bytes", len(jpg))
 	return imageResult(b.String(), jpg), nil, nil
+}
+
+// tileLabel is the text on a tile: number, time and what was seen, e.g. "3) 2:12pm (person, car)",
+// with the camera before the objects if asked for. It's kept short; the list has the full date.
+func tileLabel(n int, r frigate.Review, loc *time.Location, camera bool) string {
+	s := fmt.Sprintf("%d) %s", n, r.Start.In(loc).Format("3:04pm"))
+	if camera {
+		s += " " + r.Camera
+	}
+	if what := dedupe(r.Data.Objects); len(what) > 0 {
+		s += " (" + strings.Join(what, ", ") + ")"
+	}
+	return s
 }
 
 // gridHeight is the height the whole grid fits in: the configured snapshot height, but at least
@@ -212,7 +224,7 @@ func drawLabel(dst *image.RGBA, cell image.Rectangle, s string, center bool) {
 		Dot: fixed.P(pad, pad+face.Ascent)}
 	d.DrawString(s)
 
-	scale := max(1, cell.Dy()/110)
+	scale := max(1, cell.Dy()/160)
 	for scale > 1 && tw*scale > cell.Dx() {
 		scale--
 	}

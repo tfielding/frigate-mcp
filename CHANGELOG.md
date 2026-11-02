@@ -12,7 +12,8 @@ All notable changes to this project are documented here. The format follows
   with camera, objects, sub-labels, zones and audio, plus Frigate's GenAI description when present.
 - `get_alert_snapshot`: the recorded frame of an alert or detection, falling back to an object snapshot.
 - `get_alerts_grid`: the newest alerts (up to 9) as one numbered picture grid with a matching list, for
-  local vision models that handle one image better than several.
+  local vision models that handle one image better than several. Tiles show the number, time and objects;
+  `GRID_CAMERA_LABELS=true` adds the camera name.
 - `list_events` and `get_event_snapshot`: tracked objects filtered by camera, label, zone and time.
 - `search_events`: semantic search, offered only while semantic search is enabled in Frigate.
 - Login with a Frigate user (viewer role is enough) and automatic re-login, or the internal port
