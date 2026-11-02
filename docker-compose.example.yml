@@ -1,0 +1,18 @@
+services:
+  frigate-mcp:
+    container_name: frigate-mcp
+    image: ghcr.io/tfielding/frigate-mcp:latest
+    restart: always
+    environment:
+      - FRIGATE_URL=https://<frigate-host>:8971
+      - FRIGATE_USERNAME=mcp                # a Frigate user with the viewer role
+      - FRIGATE_PASSWORD=...
+      - FRIGATE_TLS_INSECURE=true           # Frigate's own self-signed certificate on 8971
+      - TZ=America/New_York                 # times are shown in this time zone
+      # - CAMERAS=driveway,front_door       # limit which cameras are exposed (default: all)
+      # - SNAPSHOT_HEIGHT=720               # image height; 0 = native
+      # - AUTH_TOKEN=...                    # require "Authorization: Bearer <token>" from MCP clients
+    # No ports needed if MCP clients (e.g. signal-ollama) are on the same Docker network:
+    # they connect to http://frigate-mcp:8091/mcp
+    # ports:
+    #   - "127.0.0.1:8091:8091"

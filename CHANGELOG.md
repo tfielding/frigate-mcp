@@ -1,0 +1,18 @@
+# Changelog
+
+All notable changes to this project are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
+[Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Added
+- Read-only MCP server (Streamable HTTP) for Frigate NVR 0.18.
+- `get_alerts`: counts of alerts and detections over a time range, and a list of them (newest first)
+  with camera, objects, sub-labels, zones and audio, plus Frigate's GenAI description when present.
+- `get_alert_snapshot`: the recorded frame of an alert or detection, falling back to an object snapshot.
+- `list_events` and `get_event_snapshot`: tracked objects filtered by camera, label, zone and time.
+- `search_events`: semantic search, offered only while semantic search is enabled in Frigate.
+- Login with a Frigate user (viewer role is enough) and automatic re-login, or the internal port
+  without login. Optional camera allowlist, bearer token, snapshot height, time zone, `/healthz`.
+- `-version` flag.

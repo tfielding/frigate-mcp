@@ -1,0 +1,6 @@
+.git
+.github
+frigate-mcp
+*.md
+docker-compose*.yml
+docker-workflow.yml
