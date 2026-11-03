@@ -69,7 +69,9 @@ func ParseCorner(s string) (Corner, error) {
 type GridInput struct {
 	Severity string `json:"severity,omitempty" jsonschema:"alert (default), detection, or all"`
 	Camera   string `json:"camera,omitempty" jsonschema:"only this camera; omit for all cameras"`
-	Since    string `json:"since,omitempty" jsonschema:"how far back: e.g. 30m, 6h, 2d, 1w, today, yesterday. Default 24h"`
+	Since    string `json:"since,omitempty" jsonschema:"how far back: e.g. 30m, 6h, 2d, 1w, today, yesterday. Default 24h. For a time of day use from and to instead"`
+	From     string `json:"from,omitempty" jsonschema:"start of a time range, e.g. 11:30, 2pm, noon, yesterday 18:00. For \"around noon\" use from 11:30 and to 12:30"`
+	To       string `json:"to,omitempty" jsonschema:"end of a time range, same forms as from. Default now"`
 	Limit    int    `json:"limit,omitempty" jsonschema:"how many pictures, newest first. Default 6, at most 9"`
 }
 
@@ -84,10 +86,23 @@ type tile struct {
 // grid finishes a grid tool's answer: b already holds the header, total is how many items matched.
 // It numbers the tiles, fetches their pictures and returns the list with one grid image. It's
 // used so a model that handles one image well (or has little context) can see several at once.
-func (t *Toolset) grid(ctx context.Context, tool string, b *strings.Builder, tiles []tile, total int, more, footer string) *mcp.CallToolResult {
+// gridAnswer is what a grid tool hands to grid.
+type gridAnswer struct {
+	tool   string
+	period string           // the time range, for the log
+	b      *strings.Builder // holds the header already
+	tiles  []tile
+	total  int    // how many items matched; more than len(tiles) when cut to the limit
+	more   string // heading to use instead of the default, e.g. when the query hit its limit
+	older  string // how to ask for older items; written when not everything is shown
+	footer string
+}
+
+func (t *Toolset) grid(ctx context.Context, a gridAnswer) *mcp.CallToolResult {
+	tool, b, tiles, total, more, older, footer := a.tool, a.b, a.tiles, a.total, a.more, a.older, a.footer
 	if len(tiles) == 0 {
 		b.WriteString("Nothing to show.\n")
-		slog.Info(tool, "shown", 0)
+		slog.Info(tool, "period", a.period, "shown", 0)
 		return text(b.String())
 	}
 	switch {
@@ -122,6 +137,9 @@ func (t *Toolset) grid(ctx context.Context, tool string, b *strings.Builder, til
 	case missing > 1:
 		fmt.Fprintf(b, "%d items have no picture (shown as empty tiles).\n", missing)
 	}
+	if older != "" && (total > len(tiles) || more != "") {
+		b.WriteString(older)
+	}
 	b.WriteString(footer)
 
 	jpg, err := l.render(pics, labels)
@@ -129,13 +147,13 @@ func (t *Toolset) grid(ctx context.Context, tool string, b *strings.Builder, til
 		slog.Error(tool+": encode", "err", err)
 		return errorResult("couldn't build the picture grid (details in the frigate-mcp log)")
 	}
-	slog.Info(tool, "shown", len(tiles), "missing", missing, "bytes", len(jpg))
+	slog.Info(tool, "period", a.period, "shown", len(tiles), "missing", missing, "bytes", len(jpg))
 	return imageResult(b.String(), jpg)
 }
 
 // alertsGrid shows the newest alerts as one numbered picture grid.
 func (t *Toolset) alertsGrid(ctx context.Context, _ *mcp.CallToolRequest, in GridInput) (*mcp.CallToolResult, any, error) {
-	sel, err := t.selectReviews(ctx, in.Severity, in.Camera, in.Since)
+	sel, err := t.selectReviews(ctx, in.Severity, in.Camera, timeRange{in.Since, in.From, in.To})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -153,8 +171,12 @@ func (t *Toolset) alertsGrid(ctx context.Context, _ *mcp.CallToolRequest, in Gri
 	}
 	var b strings.Builder
 	b.WriteString(sel.header())
-	return t.grid(ctx, "get_alerts_grid", &b, tiles, len(sel.shown), "",
-		"Use get_alert_snapshot with an id for a bigger picture of one.\n"), nil, nil
+	older := ""
+	if len(shown) > 0 {
+		older = olderHint(shown[len(shown)-1].Start.Time, sel.now)
+	}
+	return t.grid(ctx, gridAnswer{tool: "get_alerts_grid", period: sel.period, b: &b, tiles: tiles, total: len(sel.shown),
+		older: older, footer: "Use get_alert_snapshot with an id for a bigger picture of one.\n"}), nil, nil
 }
 
 // eventTiles makes grid tiles of tracked objects, using their saved snapshots (with boxes).
@@ -183,12 +205,13 @@ func (t *Toolset) eventsGrid(ctx context.Context, _ *mcp.CallToolRequest, in Eve
 	}
 	var b strings.Builder
 	b.WriteString(sel.header)
-	more := ""
-	if len(sel.events) == sel.limit {
+	more, older := "", ""
+	if sel.full() {
 		more = fmt.Sprintf("Pictures of the newest %d (there may be more), numbered as in the grid (left to right, top to bottom):\n", sel.limit)
+		older = olderHint(sel.events[len(sel.events)-1].Start.Time, sel.now)
 	}
-	return t.grid(ctx, "get_events_grid", &b, t.eventTiles(sel.events, sel.now), len(sel.events), more,
-		"Use get_event_snapshot with an id for a bigger picture of one.\n"), nil, nil
+	return t.grid(ctx, gridAnswer{tool: "get_events_grid", period: sel.period, b: &b, tiles: t.eventTiles(sel.events, sel.now),
+		total: len(sel.events), more: more, older: older, footer: "Use get_event_snapshot with an id for a bigger picture of one.\n"}), nil, nil
 }
 
 // searchGrid shows the best semantic search matches as one numbered picture grid.
@@ -199,9 +222,9 @@ func (t *Toolset) searchGrid(ctx context.Context, _ *mcp.CallToolRequest, in Sea
 	}
 	var b strings.Builder
 	b.WriteString(sel.header)
-	return t.grid(ctx, "search_events_grid", &b, t.eventTiles(sel.events, sel.now), len(sel.events),
-		"Pictures of the best matches first, numbered as in the grid (left to right, top to bottom):\n",
-		"Matches are by appearance and may be wrong. Use get_event_snapshot with an id for a bigger picture of one.\n"), nil, nil
+	return t.grid(ctx, gridAnswer{tool: "search_events_grid", period: sel.period, b: &b, tiles: t.eventTiles(sel.events, sel.now),
+		total: len(sel.events), more: "Pictures of the best matches first, numbered as in the grid (left to right, top to bottom):\n",
+		footer: "Matches are by appearance and may be wrong. Use get_event_snapshot with an id for a bigger picture of one.\n"}), nil, nil
 }
 
 // tileLabel is the text on a tile after its number: 24-hour time and what was seen, e.g.

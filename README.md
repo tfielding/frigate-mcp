@@ -18,17 +18,25 @@ Tested against Frigate 0.18.
 
 | Tool | Input | Returns |
 |---|---|---|
-| `get_alerts` | optional `severity` (`alert` default, `detection`, `all`), `camera`, `since`, `limit` | Counts of alerts and detections, then a list, newest first |
-| `get_alerts_grid` | optional `severity`, `camera`, `since`, `limit` (default 6, at most 9) | One numbered grid picture of the newest items (JPEG), plus the same list as `get_alerts` with matching numbers |
+| `get_alerts` | optional `severity` (`alert` default, `detection`, `all`), `camera`, `since`, `from`, `to`, `limit` | Counts of alerts and detections, then a list, newest first |
+| `get_alerts_grid` | optional `severity`, `camera`, `since`, `from`, `to`, `limit` (default 6, at most 9) | One numbered grid picture of the newest items (JPEG), plus the same list as `get_alerts` with matching numbers |
 | `get_alert_snapshot` | `id` from `get_alerts` | The picture for that item (JPEG) |
-| `list_events` | optional `camera`, `label`, `zone`, `since`, `limit` | Tracked objects, newest first |
-| `get_events_grid` | same as `list_events`, `limit` default 6, at most 9 | One numbered grid of the objects' snapshots with boxes (JPEG), plus the same list as `list_events` |
-| `get_event_snapshot` | `id` from `list_events` / `search_events` | The object's saved snapshot with its box drawn (JPEG) |
-| `search_events` | `query`, optional `camera`, `since`, `limit` | Best matches by appearance. **Only offered while semantic search is enabled in Frigate** |
+| `get_events` | optional `camera`, `label`, `zone`, `since`, `from`, `to`, `limit` | Tracked objects, newest first |
+| `get_events_grid` | same as `get_events`, `limit` default 6, at most 9 | One numbered grid of the objects' snapshots with boxes (JPEG), plus the same list as `get_events` |
+| `get_event_snapshot` | `id` from `get_events` / `search_events` | The object's saved snapshot with its box drawn (JPEG) |
+| `search_events` | `query`, optional `camera`, `since`, `from`, `to`, `limit` | Best matches by appearance. **Only offered while semantic search is enabled in Frigate** |
 | `search_events_grid` | same as `search_events`, `limit` default 6, at most 9 | One numbered grid of the best matches' snapshots with boxes (JPEG), plus the list. **Only with semantic search, like `search_events`** |
 | `get_system_status` | none | Whether Frigate and the cameras are working: offline or poorly connected cameras, detector speed, free disk space, Frigate version |
 
 `since` takes `30m`, `6h`, `2d`, `1w`, `today` or `yesterday` (default 24 hours, at most 31 days).
+For a time of day, `from` and `to` take times the way people say them: `11:30`, `2pm`, `noon`,
+`yesterday 18:00`, `2026-10-30 09:15`. "Cars around noon" is `from: 11:30, to: 12:30`. A time without a
+day is the most recent one, so at 10:00 `16:00` means yesterday. `to` alone ends the range there
+(with `since`, or 24 hours, counted back from it).
+
+Lists are newest first and stop at `limit`. When they do, the answer ends with the exact way to get
+the earlier ones, e.g. `For older ones, call again with the same arguments and to: 12:28:40`, so a
+model can page back through a busy day.
 Camera, label and zone names are checked against Frigate's config and matched loosely (`Front Door`
 finds `front_door`, `cars` finds `car`); a wrong name returns the valid ones so the model can retry.
 

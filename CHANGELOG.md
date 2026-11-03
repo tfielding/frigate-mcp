@@ -22,7 +22,9 @@ All notable changes to this project are documented here. The format follows
   the viewer role.
 - `get_events_grid` and `search_events_grid` (with semantic search): the same picture grid for tracked
   objects, using their snapshots with boxes.
-- `list_events` and `get_event_snapshot`: tracked objects filtered by camera, label, zone and time.
+- `get_events` and `get_event_snapshot`: tracked objects filtered by camera, label, zone and time.
+- `from` and `to` on every list, grid and search tool, for a time of day ("around noon": `from: 11:30,
+  to: 12:30`); lists cut off at their limit end with the exact `to` for fetching older items.
 - `search_events`: semantic search, offered only while semantic search is enabled in Frigate.
 - Login with a Frigate user (viewer role is enough) and automatic re-login, or the internal port
   without login. Optional camera allowlist, bearer token, snapshot height, time zone, `/healthz`.

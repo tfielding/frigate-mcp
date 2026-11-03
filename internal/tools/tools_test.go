@@ -282,3 +282,84 @@ func TestStatusFormatting(t *testing.T) {
 		t.Errorf("storage: %q", separate)
 	}
 }
+
+func TestParseTimeArg(t *testing.T) {
+	// now is Sun 1 Nov 2026 15:00 UTC.
+	at := func(day, h, m, s int) time.Time { return time.Date(2026, 11, day, h, m, s, 0, time.UTC) }
+	for in, want := range map[string]time.Time{
+		"11:30":                  at(1, 11, 30, 0),
+		"9:05":                   at(1, 9, 5, 0),
+		"noon":                   at(1, 12, 0, 0),
+		"Midnight":               at(1, 0, 0, 0),
+		"2pm":                    at(1, 14, 0, 0),
+		"2 PM":                   at(1, 14, 0, 0),
+		"2:15 p.m.":              at(1, 14, 15, 0),
+		"12am":                   at(1, 0, 0, 0),
+		"12:30pm":                at(1, 12, 30, 0),
+		"14:05:30":               at(1, 14, 5, 30),
+		"16:00":                  at(0, 16, 0, 0), /* later than now: yesterday */
+		"today 16:00":            at(1, 16, 0, 0),
+		"yesterday 18:00":        at(0, 18, 0, 0),
+		"yesterday at 6pm":       at(0, 18, 0, 0),
+		"yesterday":              at(0, 0, 0, 0),
+		"2026-10-30 09:15":       at(30, 9, 15, 0).AddDate(0, -1, 0),
+		"2026-10-30 at 12:28:40": at(30, 12, 28, 40).AddDate(0, -1, 0),
+	} {
+		got, err := parseTimeArg(in, now)
+		if err != nil || !got.Equal(want) {
+			t.Errorf("parseTimeArg(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "lunch", "25:00", "13pm", "0am", "11", "11:5", "11:60", "2026-13-01 10:00", "1:2:3:4"} {
+		if got, err := parseTimeArg(bad, now); err == nil {
+			t.Errorf("parseTimeArg(%q) = %v, want error", bad, got)
+		}
+	}
+	// What timeArg writes, parseTimeArg reads back exactly.
+	for _, tm := range []time.Time{now.Add(-150 * time.Minute), now.Add(-20 * time.Hour), now.Add(-80 * time.Hour)} {
+		tm = tm.Add(17 * time.Second)
+		if got, err := parseTimeArg(timeArg(tm, now), now); err != nil || !got.Equal(tm) {
+			t.Errorf("round trip of %v via %q: %v, %v", tm, timeArg(tm, now), got, err)
+		}
+	}
+}
+
+func TestTimeRange(t *testing.T) {
+	at := func(h, m int) time.Time { return time.Date(2026, 11, 1, h, m, 0, 0, time.UTC) }
+	midnight := at(0, 0)
+	for _, tc := range []struct {
+		r             timeRange
+		def           string
+		after, before time.Time
+		label         string
+	}{
+		{timeRange{}, "24h", now.Add(-24 * time.Hour), now, "last 24 hours"},
+		{timeRange{}, "", time.Time{}, time.Time{}, "all retained history"},
+		{timeRange{from: "11:30", to: "12:30"}, "24h", at(11, 30), at(12, 30), "between today 11:30 and today 12:30"},
+		{timeRange{from: "noon"}, "24h", at(12, 0), now, "since today 12:00"},
+		{timeRange{to: "12:28"}, "24h", at(12, 28).Add(-24 * time.Hour), at(12, 28), "between yesterday 12:28 and today 12:28"},
+		{timeRange{since: "today", to: "12:28"}, "24h", midnight, at(12, 28), "between today 00:00 and today 12:28"},
+		{timeRange{since: "2h", to: "noon"}, "24h", at(10, 0), at(12, 0), "between today 10:00 and today 12:00"},
+		{timeRange{to: "noon"}, "", time.Time{}, at(12, 0), "up to today 12:00"},
+		{timeRange{from: "11:00", to: "today 23:00"}, "24h", at(11, 0), now, "since today 11:00"}, // to in the future: now
+		{timeRange{from: "2026-09-01 00:00", to: "noon"}, "24h", at(12, 0).Add(-maxRange), at(12, 0), "between Thu 1 Oct 12:00 and today 12:00"},
+	} {
+		after, before, label, err := tc.r.resolve(tc.def, now)
+		if err != nil || !after.Equal(tc.after) || !before.Equal(tc.before) || label != tc.label {
+			t.Errorf("%+v: got %v..%v %q %v", tc.r, after, before, label, err)
+		}
+	}
+	for _, tc := range []struct {
+		r    timeRange
+		want string
+	}{
+		{timeRange{from: "13:00", to: "12:00"}, "from (today 13:00) must be before to (today 12:00)"},
+		{timeRange{from: "lunch"}, `from "lunch" not understood; use e.g. 11:30`},
+		{timeRange{to: "later"}, `to "later" not understood`},
+		{timeRange{from: "today 18:00"}, "from today 18:00 is in the future"},
+	} {
+		if _, _, _, err := tc.r.resolve("24h", now); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%+v: got %v, want %q", tc.r, err, tc.want)
+		}
+	}
+}

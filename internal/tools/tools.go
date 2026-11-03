@@ -49,7 +49,9 @@ const (
 type AlertsInput struct {
 	Severity string `json:"severity,omitempty" jsonschema:"alert (default), detection, or all. Alerts are the important items; detections are lower priority"`
 	Camera   string `json:"camera,omitempty" jsonschema:"only this camera; omit for all cameras"`
-	Since    string `json:"since,omitempty" jsonschema:"how far back: e.g. 30m, 6h, 2d, 1w, today, yesterday. Default 24h"`
+	Since    string `json:"since,omitempty" jsonschema:"how far back: e.g. 30m, 6h, 2d, 1w, today, yesterday. Default 24h. For a time of day use from and to instead"`
+	From     string `json:"from,omitempty" jsonschema:"start of a time range, e.g. 11:30, 2pm, noon, yesterday 18:00. For \"around noon\" use from 11:30 and to 12:30"`
+	To       string `json:"to,omitempty" jsonschema:"end of a time range, same forms as from. Default now"`
 	Limit    int    `json:"limit,omitempty" jsonschema:"maximum items to list, newest first. Default 10"`
 }
 
@@ -61,7 +63,9 @@ type EventsInput struct {
 	Camera string `json:"camera,omitempty" jsonschema:"only this camera; omit for all cameras"`
 	Label  string `json:"label,omitempty" jsonschema:"only this kind of object, e.g. person, car, dog"`
 	Zone   string `json:"zone,omitempty" jsonschema:"only objects that entered this zone"`
-	Since  string `json:"since,omitempty" jsonschema:"how far back: e.g. 30m, 6h, 2d, 1w, today, yesterday. Default 24h"`
+	Since  string `json:"since,omitempty" jsonschema:"how far back: e.g. 30m, 6h, 2d, 1w, today, yesterday. Default 24h. For a time of day use from and to instead"`
+	From   string `json:"from,omitempty" jsonschema:"start of a time range, e.g. 11:30, 2pm, noon, yesterday 18:00. For \"around noon\" use from 11:30 and to 12:30"`
+	To     string `json:"to,omitempty" jsonschema:"end of a time range, same forms as from. Default now"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"maximum objects to list, newest first. Default 10"`
 }
 
@@ -69,6 +73,8 @@ type SearchInput struct {
 	Query  string `json:"query" jsonschema:"what to look for, in plain words, e.g. red pickup truck or person carrying a box"`
 	Camera string `json:"camera,omitempty" jsonschema:"only this camera; omit for all cameras"`
 	Since  string `json:"since,omitempty" jsonschema:"how far back: e.g. 6h, 2d, 1w. Default: all retained history"`
+	From   string `json:"from,omitempty" jsonschema:"start of a time range, e.g. 11:30, 2pm, noon, yesterday 18:00. For \"around noon\" use from 11:30 and to 12:30"`
+	To     string `json:"to,omitempty" jsonschema:"end of a time range, same forms as from. Default now"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"maximum results, best match first. Default 5"`
 }
 
@@ -116,9 +122,10 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 		Annotations: readOnly("Alert snapshot"),
 	}, t.alertSnapshot)
 	mcp.AddTool(s, &mcp.Tool{
-		Name: "list_events",
+		Name: "get_events",
 		Description: "Text only, no pictures. List individual objects Frigate tracked (person, car, dog, ...), newest first, " +
-			"with time, camera, zones and an id. Use for questions like \"when was the last car in the driveway?\". " +
+			"with time, camera, zones and an id. Use for questions like \"when was the last car in the driveway?\"; for a time of " +
+			"day like \"around noon\", pass from and to. " +
 			"To show or see pictures of them, use get_events_grid instead.",
 		Annotations: readOnly("Frigate events"),
 	}, t.events)
@@ -126,12 +133,12 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 		Name: "get_events_grid",
 		Description: "Show pictures of tracked objects (person, car, dog, ...): one image with the newest matching objects as " +
 			"a numbered grid (up to 9), each with its box drawn, plus a matching list with times and ids. Use whenever the " +
-			"user wants to see objects, e.g. \"show me all the cars today\". Takes the same filters as list_events.",
+			"user wants to see objects, e.g. \"show me all the cars today\". Takes the same filters as get_events.",
 		Annotations: readOnly("Events picture grid"),
 	}, t.eventsGrid)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_event_snapshot",
-		Description: "Show the saved snapshot (JPEG) of one tracked object from list_events or search_events, with its box drawn.",
+		Description: "Show the saved snapshot (JPEG) of one tracked object from get_events or search_events, with its box drawn.",
 		Annotations: readOnly("Event snapshot"),
 	}, t.eventSnapshot)
 
@@ -202,7 +209,7 @@ func readOnly(title string) *mcp.ToolAnnotations {
 }
 
 func (t *Toolset) alerts(ctx context.Context, _ *mcp.CallToolRequest, in AlertsInput) (*mcp.CallToolResult, any, error) {
-	sel, err := t.selectReviews(ctx, in.Severity, in.Camera, in.Since)
+	sel, err := t.selectReviews(ctx, in.Severity, in.Camera, timeRange{in.Since, in.From, in.To})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -224,15 +231,18 @@ func (t *Toolset) alerts(ctx context.Context, _ *mcp.CallToolRequest, in AlertsI
 		for _, r := range shown {
 			b.WriteString(reviewLine(r, sel.severity == "all", sel.now))
 		}
+		if len(sel.shown) > limit {
+			b.WriteString(olderHint(shown[len(shown)-1].Start.Time, sel.now))
+		}
 		b.WriteString("Use get_alert_snapshot with an id to show the picture, or get_alerts_grid to see several at once.\n")
 	}
-	slog.Info("get_alerts", "severity", sel.severity, "since", sel.period, "alerts", sel.alerts, "detections", sel.detections, "listed", len(shown))
+	slog.Info("get_alerts", "severity", sel.severity, "period", sel.period, "alerts", sel.alerts, "detections", sel.detections, "listed", len(shown))
 	return text(b.String()), nil, nil
 }
 
 // selectReviews runs the review query behind get_alerts and get_alerts_grid: counts of both
 // severities over the window, and the items of the requested severity, newest first.
-func (t *Toolset) selectReviews(ctx context.Context, severityArg, camera, since string) (reviewSelection, error) {
+func (t *Toolset) selectReviews(ctx context.Context, severityArg, camera string, tr timeRange) (reviewSelection, error) {
 	var sel reviewSelection
 	cat, err := t.cat.get(ctx)
 	if err != nil {
@@ -249,7 +259,7 @@ func (t *Toolset) selectReviews(ctx context.Context, severityArg, camera, since 
 		return sel, fmt.Errorf("severity %q not understood; use alert, detection or all", severityArg)
 	}
 	sel.now = t.opt.Now().In(t.opt.Location)
-	after, before, period, err := window(since, "24h", sel.now)
+	after, before, period, err := tr.resolve("24h", sel.now)
 	if err != nil {
 		return sel, err
 	}
@@ -399,27 +409,39 @@ func (t *Toolset) events(ctx context.Context, _ *mcp.CallToolRequest, in EventsI
 	if len(sel.events) == 0 {
 		b.WriteString("None found.\n")
 	} else {
-		if len(sel.events) == sel.limit {
+		if sel.full() {
 			fmt.Fprintf(&b, "Newest %d (there may be more):\n", sel.limit)
 		}
 		for _, e := range sel.events {
 			b.WriteString(eventLine(e, sel.now))
 		}
+		if sel.full() {
+			b.WriteString(olderHint(sel.events[len(sel.events)-1].Start.Time, sel.now))
+		}
 		b.WriteString("Use get_event_snapshot with an id to show the picture, or get_events_grid to see several at once.\n")
 	}
-	slog.Info("list_events", "found", len(sel.events))
+	slog.Info("get_events", "period", sel.period, "label", in.Label, "camera", in.Camera, "zone", in.Zone, "found", len(sel.events))
 	return text(b.String()), nil, nil
 }
 
 // eventSelection is the result of an event query or search, shared by the list and grid tools.
 type eventSelection struct {
 	header string // first line(s) of the answer: what was asked for, and the time zone
+	period string
 	events []frigate.Event
 	limit  int
 	now    time.Time
 }
 
-// selectEvents runs the tracked-object query behind list_events and get_events_grid.
+// full reports whether the query hit its limit, so there may be more (older) items.
+func (s eventSelection) full() bool { return len(s.events) > 0 && len(s.events) >= s.limit }
+
+// olderHint tells the model exactly how to ask for the items before the oldest one shown.
+func olderHint(oldest, now time.Time) string {
+	return fmt.Sprintf("For older ones, call again with the same arguments and to: %s\n", timeArg(oldest, now))
+}
+
+// selectEvents runs the tracked-object query behind get_events and get_events_grid.
 func (t *Toolset) selectEvents(ctx context.Context, in EventsInput, limit int) (eventSelection, error) {
 	sel := eventSelection{limit: limit}
 	cat, err := t.cat.get(ctx)
@@ -427,10 +449,11 @@ func (t *Toolset) selectEvents(ctx context.Context, in EventsInput, limit int) (
 		return sel, unavailable(err)
 	}
 	sel.now = t.opt.Now().In(t.opt.Location)
-	after, before, period, err := window(in.Since, "24h", sel.now)
+	after, before, period, err := timeRange{in.Since, in.From, in.To}.resolve("24h", sel.now)
 	if err != nil {
 		return sel, err
 	}
+	sel.period = period
 	f := frigate.Filter{After: after, Before: before, Limit: limit}
 	if f.Cameras, err = cat.filterCameras(in.Camera, len(t.opt.Allowed) > 0); err != nil {
 		return sel, err
@@ -501,7 +524,7 @@ func eventLine(e frigate.Event, now time.Time) string {
 func (t *Toolset) eventSnapshot(ctx context.Context, _ *mcp.CallToolRequest, in IDInput) (*mcp.CallToolResult, any, error) {
 	id := strings.TrimSpace(in.ID)
 	if id == "" {
-		return nil, nil, errors.New("id is required; get it from list_events")
+		return nil, nil, errors.New("id is required; get it from get_events")
 	}
 	cat, err := t.cat.get(ctx)
 	if err != nil {
@@ -509,7 +532,7 @@ func (t *Toolset) eventSnapshot(ctx context.Context, _ *mcp.CallToolRequest, in 
 	}
 	e, err := t.src.Event(ctx, id)
 	if errors.Is(err, frigate.ErrNotFound) || (err == nil && !cat.visible(e.Camera)) {
-		return nil, nil, fmt.Errorf("no tracked object with id %q; get ids from list_events", id)
+		return nil, nil, fmt.Errorf("no tracked object with id %q; get ids from get_events", id)
 	}
 	if err != nil {
 		slog.Error("get_event_snapshot", "id", id, "err", err)
@@ -546,7 +569,7 @@ func (t *Toolset) searchEvents(ctx context.Context, _ *mcp.CallToolRequest, in S
 		}
 		b.WriteString("Matches are by appearance and may be wrong; check with get_event_snapshot, or search_events_grid to see several at once.\n")
 	}
-	slog.Info("search_events", "found", len(sel.events))
+	slog.Info("search_events", "period", sel.period, "camera", in.Camera, "found", len(sel.events))
 	return text(b.String()), nil, nil
 }
 
@@ -563,12 +586,11 @@ func (t *Toolset) selectSearch(ctx context.Context, in SearchInput, limit int) (
 	}
 	sel.now = t.opt.Now().In(t.opt.Location)
 	f := frigate.Filter{Limit: limit}
-	period := "all retained history"
-	if in.Since != "" {
-		if f.After, f.Before, period, err = window(in.Since, "", sel.now); err != nil {
-			return sel, err
-		}
+	var period string
+	if f.After, f.Before, period, err = (timeRange{in.Since, in.From, in.To}).resolve("", sel.now); err != nil {
+		return sel, err
 	}
+	sel.period = period
 	if f.Cameras, err = cat.filterCameras(in.Camera, len(t.opt.Allowed) > 0); err != nil {
 		return sel, err
 	}

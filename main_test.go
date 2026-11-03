@@ -277,7 +277,7 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) map[string]bool {
 
 func TestToolsAreListedReadOnly(t *testing.T) {
 	names := toolNames(t, start(t, config{}, nil))
-	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "list_events", "get_events_grid", "get_event_snapshot",
+	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "get_events", "get_events_grid", "get_event_snapshot",
 		"get_system_status"}
 	for _, n := range want {
 		if !names[n] {
@@ -578,6 +578,46 @@ func TestSearchGrid(t *testing.T) {
 	}
 }
 
+func TestTimeOfDayAndOlderHint(t *testing.T) {
+	fake := &fakeFrigate{}
+	cs := start(t, config{}, fake)
+
+	// "around noon": from/to go to Frigate as after/before.
+	res := call(t, cs, "get_events", map[string]any{"label": "car", "from": "11:30", "to": "12:30"})
+	if res.IsError || !strings.Contains(text(res), "Tracked car objects, between today 11:30 and today 12:30. Times are UTC.") {
+		t.Fatalf("got %s", text(res))
+	}
+	q := fake.requests[len(fake.requests)-1]
+	noon := func(h, m int) string {
+		return strconv.FormatFloat(float64(time.Date(2026, 11, 1, h, m, 0, 0, time.UTC).Unix()), 'f', 3, 64)
+	}
+	if !strings.Contains(q, "after="+noon(11, 30)) || !strings.Contains(q, "before="+noon(12, 30)) {
+		t.Errorf("events query %s", q)
+	}
+
+	// When the limit is hit, the answer says exactly how to get the older ones.
+	hint := "For older ones, call again with the same arguments and to: 12:00:00\n"
+	for _, tool := range []string{"get_events", "get_events_grid"} {
+		if got := text(call(t, cs, tool, map[string]any{"limit": 2})); !strings.Contains(got, hint) {
+			t.Errorf("%s: no older hint in:\n%s", tool, got)
+		}
+		if got := text(call(t, cs, tool, map[string]any{"limit": 5})); strings.Contains(got, "For older ones") {
+			t.Errorf("%s: older hint although everything was shown:\n%s", tool, got)
+		}
+	}
+	for _, tool := range []string{"get_alerts", "get_alerts_grid"} {
+		got := text(call(t, cs, tool, map[string]any{"limit": 1}))
+		if !strings.Contains(got, "For older ones, call again with the same arguments and to: 13:00:00\n") {
+			t.Errorf("%s: no older hint in:\n%s", tool, got)
+		}
+	}
+
+	res = call(t, cs, "get_alerts", map[string]any{"from": "after lunch"})
+	if !res.IsError || !strings.Contains(text(res), "use e.g. 11:30, 2pm, noon") {
+		t.Fatalf("got %s", text(res))
+	}
+}
+
 func TestSystemStatus(t *testing.T) {
 	cs := start(t, config{}, nil)
 	res := call(t, cs, "get_system_status", nil)
@@ -617,7 +657,7 @@ func TestAlertsGridHonorsAllowlist(t *testing.T) {
 func TestListEvents(t *testing.T) {
 	fake := &fakeFrigate{}
 	cs := start(t, config{}, fake)
-	res := call(t, cs, "list_events", map[string]any{"label": "cars", "zone": "Driveway", "since": "today"})
+	res := call(t, cs, "get_events", map[string]any{"label": "cars", "zone": "Driveway", "since": "today"})
 	got := text(res)
 	if res.IsError || !strings.Contains(got, "Tracked car objects, today, zone driveway. Times are UTC.") ||
 		!strings.Contains(got, "- today 14:00 (6m00s), driveway: car 86%; zones: driveway; plate: ABC123; id e-car") ||
@@ -631,11 +671,11 @@ func TestListEvents(t *testing.T) {
 			t.Errorf("events query %s lacks %s", q, want)
 		}
 	}
-	res = call(t, cs, "list_events", map[string]any{"label": "unicorn"})
+	res = call(t, cs, "get_events", map[string]any{"label": "unicorn"})
 	if !res.IsError || !strings.Contains(text(res), "tracked labels: car, dog, person, speech") {
 		t.Fatalf("got %s", text(res))
 	}
-	res = call(t, cs, "list_events", map[string]any{"since": "sometime"})
+	res = call(t, cs, "get_events", map[string]any{"since": "sometime"})
 	if !res.IsError || !strings.Contains(text(res), "use e.g. 30m, 6h") {
 		t.Fatalf("got %s", text(res))
 	}
@@ -660,7 +700,7 @@ func TestLogsInAgainWhenSessionExpires(t *testing.T) {
 	fake.mu.Lock()
 	fake.token = "revoked.token.value" // the session expires on Frigate's side
 	fake.mu.Unlock()
-	res := call(t, cs, "list_events", nil)
+	res := call(t, cs, "get_events", nil)
 	if res.IsError {
 		t.Fatalf("got %s", text(res))
 	}
