@@ -88,6 +88,26 @@ func (f *fakeFrigate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		    "bedroom":    {"enabled": true, "objects": {"track": ["person"]}},
 		    "old_cam":    {"enabled": false, "objects": {"track": ["bird"]}}
 		  }}`, f.semantic)
+	case p == "/api/stats":
+		fmt.Fprint(w, `{
+		  "cameras": {
+		    "front_door": {"camera_fps": 5.0, "skipped_fps": 0, "detection_enabled": true, "connection_quality": "excellent",
+		                   "expected_fps": 5, "reconnects_last_hour": 0, "stalls_last_hour": 0, "ffmpeg_pid": 41},
+		    "driveway":   {"camera_fps": 0.0, "skipped_fps": 0, "detection_enabled": true, "connection_quality": "unusable",
+		                   "expected_fps": 5, "reconnects_last_hour": 12, "stalls_last_hour": 0},
+		    "bedroom":    {"camera_fps": 5.0, "skipped_fps": 0, "detection_enabled": false, "connection_quality": "excellent",
+		                   "expected_fps": 5, "reconnects_last_hour": 0, "stalls_last_hour": 0}
+		  },
+		  "detectors": {"coral": {"inference_speed": 8.52, "detection_start": 0, "pid": 7}},
+		  "detection_fps": 3.1,
+		  "service": {"uptime": 273600, "version": "0.18.1-6ef3a7b", "latest_version": "0.18.2",
+		    "storage": {
+		      "/media/frigate/recordings": {"total": 3815447.8, "used": 3624675.4, "free": 190772.4, "mount_type": "ext4"},
+		      "/media/frigate/clips": {"total": 3815447.8, "used": 3624675.4, "free": 190772.4, "mount_type": "ext4"},
+		      "/tmp/cache": {"total": 1024.0, "used": 10.0, "free": 1014.0, "mount_type": "tmpfs"},
+		      "/dev/shm": {"total": 512.0, "used": 20.0, "free": 492.0, "mount_type": "tmpfs", "min_shm": 64.0}
+		    }}
+		}`)
 	case p == "/api/review":
 		w.Write(mustJSON(after(r, []map[string]any{
 			review("r-detect", "driveway", "detection", ts(1), ts(0.99), []string{"car"}, nil, nil),
@@ -257,7 +277,8 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) map[string]bool {
 
 func TestToolsAreListedReadOnly(t *testing.T) {
 	names := toolNames(t, start(t, config{}, nil))
-	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "list_events", "get_events_grid", "get_event_snapshot"}
+	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "list_events", "get_events_grid", "get_event_snapshot",
+		"get_system_status"}
 	for _, n := range want {
 		if !names[n] {
 			t.Errorf("missing %s", n)
@@ -554,6 +575,28 @@ func TestSearchGrid(t *testing.T) {
 	res = call(t, cs, "search_events_grid", map[string]any{"query": " "})
 	if !res.IsError || !strings.Contains(text(res), "query is required") {
 		t.Fatalf("got %s", text(res))
+	}
+}
+
+func TestSystemStatus(t *testing.T) {
+	cs := start(t, config{}, nil)
+	res := call(t, cs, "get_system_status", nil)
+	want := `Frigate 0.18.1 (version 0.18.2 is available), running for 3 days 4 hours. Checked 15:00 UTC.
+Cameras: 2 of 3 OK.
+- driveway: OFFLINE (no video); 12 reconnects in the last hour
+- OK: bedroom (object detection off), front_door
+Detector coral: 8.52 ms per detection.
+Storage for recordings and snapshots and clips: 186.3 GB free of 3.6 TB (95% used); low on space, Frigate deletes the oldest recordings to make room.
+`
+	if res.IsError || text(res) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", text(res), want)
+	}
+
+	// The allowlist hides cameras from the status too.
+	cs = start(t, config{opt: tools.Options{Allowed: map[string]bool{"front_door": true}}}, nil)
+	if got := text(call(t, cs, "get_system_status", nil)); !strings.Contains(got, "Camera: front_door is OK.\n") ||
+		strings.Contains(got, "driveway") || strings.Contains(got, "bedroom") {
+		t.Fatalf("got:\n%s", got)
 	}
 }
 

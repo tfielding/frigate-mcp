@@ -163,6 +163,41 @@ func (t *Time) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// Stats is the subset of /api/stats this server reports. Frigate filters cameras to the ones the
+// user may see.
+type Stats struct {
+	Cameras      map[string]CameraStats   `json:"cameras"`
+	Detectors    map[string]DetectorStats `json:"detectors"`
+	DetectionFPS float64                  `json:"detection_fps"`
+	Service      struct {
+		Uptime        int64                   `json:"uptime"` // seconds
+		Version       string                  `json:"version"`
+		LatestVersion string                  `json:"latest_version"`
+		Storage       map[string]StorageStats `json:"storage"` // by path; sizes in MiB
+	} `json:"service"`
+}
+
+type CameraStats struct {
+	CameraFPS          float64 `json:"camera_fps"`
+	SkippedFPS         float64 `json:"skipped_fps"`
+	DetectionEnabled   bool    `json:"detection_enabled"`
+	ConnectionQuality  string  `json:"connection_quality"` // excellent, fair, poor, unusable (0.17+)
+	ExpectedFPS        float64 `json:"expected_fps"`
+	ReconnectsLastHour int     `json:"reconnects_last_hour"`
+	StallsLastHour     int     `json:"stalls_last_hour"`
+}
+
+type DetectorStats struct {
+	InferenceSpeed float64  `json:"inference_speed"` // milliseconds
+	Temperature    *float64 `json:"temperature"`
+}
+
+type StorageStats struct {
+	Total float64 `json:"total"`
+	Used  float64 `json:"used"`
+	Free  float64 `json:"free"`
+}
+
 // Filter narrows a review or event query. Empty fields mean "all".
 type Filter struct {
 	Cameras []string
@@ -281,6 +316,15 @@ func (c *Client) RecordingFrame(ctx context.Context, camera string, t float64, h
 	}
 	p := fmt.Sprintf("/api/%s/recordings/%s/snapshot.jpg", url.PathEscape(camera), strconv.FormatFloat(t, 'f', 3, 64))
 	return c.image(ctx, p, q)
+}
+
+// Stats returns Frigate's current system stats (any logged-in user may read them).
+func (c *Client) Stats(ctx context.Context) (*Stats, error) {
+	var s Stats
+	if err := c.getJSON(ctx, "/api/stats", nil, 4<<20, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 // Ping checks that Frigate is reachable (and, with a username, that login works).

@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"strings"
 	"testing"
 	"time"
 
@@ -210,5 +211,74 @@ func TestTileLabel(t *testing.T) {
 	toronto, _ := time.LoadLocation("America/Toronto") // EST from 1 Nov 2026
 	if got := tileLabel(at, "front_door", nil, toronto, false); got != "04:30" {
 		t.Errorf("in Toronto, no objects: %q", got)
+	}
+}
+
+func TestCameraStatus(t *testing.T) {
+	stats := map[string]frigate.CameraStats{
+		"ok":      {CameraFPS: 5, ExpectedFPS: 5, ConnectionQuality: "excellent", DetectionEnabled: true},
+		"fair":    {CameraFPS: 4, ExpectedFPS: 5, ConnectionQuality: "fair", ReconnectsLastHour: 1, DetectionEnabled: true},
+		"poor":    {CameraFPS: 2.5, ExpectedFPS: 5, ConnectionQuality: "poor", ReconnectsLastHour: 4, DetectionEnabled: true},
+		"bad":     {CameraFPS: 0.8, ExpectedFPS: 5, ConnectionQuality: "unusable", DetectionEnabled: false},
+		"behind":  {CameraFPS: 5, ExpectedFPS: 5, SkippedFPS: 2, ConnectionQuality: "excellent", DetectionEnabled: true},
+		"old":     {CameraFPS: 5, DetectionEnabled: true}, // Frigate before 0.17: no connection quality
+		"unknown": {},
+	}
+	problems, ok := cameraStatus([]string{"bad", "behind", "fair", "missing", "ok", "old", "poor"}, stats)
+	wantProblems := []string{
+		"bad: very poor connection (0.8 of 5 fps); object detection is off",
+		"behind: skipping 2 frames/s (the detector can't keep up)",
+		"missing: no status from Frigate",
+		"poor: poor connection (2.5 of 5 fps); 4 reconnects in the last hour",
+	}
+	if strings.Join(problems, "\n") != strings.Join(wantProblems, "\n") {
+		t.Errorf("problems:\n%s", strings.Join(problems, "\n"))
+	}
+	if strings.Join(ok, ",") != "fair,ok,old" {
+		t.Errorf("ok: %v", ok)
+	}
+}
+
+func TestStatusFormatting(t *testing.T) {
+	for _, tc := range []struct {
+		latest, current string
+		want            bool
+	}{
+		{"0.18.2", "0.18.1-6ef3a7b", true},
+		{"0.18.2", "0.18.2-6ef3a7b", false},
+		{"0.18.2", "0.19.0-beta1", false},
+		{"0.19.0", "0.18.10", true},
+		{"unknown", "0.18.1", false},
+		{"disabled", "0.18.1", false},
+		{"", "0.18.1", false},
+	} {
+		if got := newer(tc.latest, tc.current); got != tc.want {
+			t.Errorf("newer(%q, %q) = %v", tc.latest, tc.current, got)
+		}
+	}
+	for mib, want := range map[float64]string{500: "500 MB", 2048: "2.0 GB", 3 << 20: "3.0 TB"} {
+		if got := size(mib); got != want {
+			t.Errorf("size(%v) = %q", mib, got)
+		}
+	}
+	for d, want := range map[time.Duration]string{
+		5 * time.Minute:             "5 minutes",
+		2*time.Hour + 1*time.Minute: "2 hours 1 minute",
+		50 * time.Hour:              "2 days 2 hours",
+	} {
+		if got := uptime(d); got != want {
+			t.Errorf("uptime(%v) = %q", d, got)
+		}
+	}
+	separate := storageStatus(map[string]frigate.StorageStats{
+		"/media/frigate/recordings": {Total: 1 << 20, Used: 1<<20 - 300<<10, Free: 300 << 10},
+		"/media/frigate/clips":      {Total: 100 << 10, Used: 10 << 10, Free: 90 << 10},
+		"/media/frigate/exports":    {Total: 1, Used: 1},
+	})
+	if want := []string{
+		"Storage for recordings: 300.0 GB free of 1.0 TB (71% used).",
+		"Storage for snapshots and clips: 90.0 GB free of 100.0 GB (10% used).",
+	}; strings.Join(separate, "|") != strings.Join(want, "|") {
+		t.Errorf("storage: %q", separate)
 	}
 }

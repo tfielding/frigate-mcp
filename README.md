@@ -26,6 +26,7 @@ Tested against Frigate 0.18.
 | `get_event_snapshot` | `id` from `list_events` / `search_events` | The object's saved snapshot with its box drawn (JPEG) |
 | `search_events` | `query`, optional `camera`, `since`, `limit` | Best matches by appearance. **Only offered while semantic search is enabled in Frigate** |
 | `search_events_grid` | same as `search_events`, `limit` default 6, at most 9 | One numbered grid of the best matches' snapshots with boxes (JPEG), plus the list. **Only with semantic search, like `search_events`** |
+| `get_system_status` | none | Whether Frigate and the cameras are working: offline or poorly connected cameras, detector speed, free disk space, Frigate version |
 
 `since` takes `30m`, `6h`, `2d`, `1w`, `today` or `yesterday` (default 24 hours, at most 31 days).
 Camera, label and zone names are checked against Frigate's config and matched loosely (`Front Door`

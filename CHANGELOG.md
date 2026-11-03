@@ -17,6 +17,9 @@ All notable changes to this project are documented here. The format follows
   recorded frames (`GRID_BOXES=false` for recorded frames first).
 - `GRID_LABEL_POSITION`: which corner grid tile labels go in (default bottom-left, clear of Frigate's
   timestamp).
+- `get_system_status`: cameras that are offline, poorly connected or skipping frames, detector speed,
+  free disk space and the Frigate version (with any newer release), from `/api/stats`. Works with
+  the viewer role.
 - `get_events_grid` and `search_events_grid` (with semantic search): the same picture grid for tracked
   objects, using their snapshots with boxes.
 - `list_events` and `get_event_snapshot`: tracked objects filtered by camera, label, zone and time.

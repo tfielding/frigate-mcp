@@ -25,6 +25,7 @@ type Source interface {
 	Search(ctx context.Context, query string, f frigate.Filter) ([]frigate.Event, error)
 	EventSnapshot(ctx context.Context, id string, height int) ([]byte, error)
 	RecordingFrame(ctx context.Context, camera string, t float64, height int) ([]byte, error)
+	Stats(ctx context.Context) (*frigate.Stats, error)
 }
 
 type Options struct {
@@ -133,6 +134,14 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 		Description: "Show the saved snapshot (JPEG) of one tracked object from list_events or search_events, with its box drawn.",
 		Annotations: readOnly("Event snapshot"),
 	}, t.eventSnapshot)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_system_status",
+		Description: "Check whether Frigate and the cameras are working: cameras that are offline or have a poor " +
+			"connection, detector speed, free disk space, and the Frigate version. Use for questions like " +
+			"\"are all the cameras working?\" or \"is the NVR running out of space?\".",
+		Annotations: readOnly("Frigate system status"),
+	}, t.systemStatus)
 
 	start, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
