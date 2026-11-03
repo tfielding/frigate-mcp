@@ -330,7 +330,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================
-golang.org/x/image v0.40.0, golang.org/x/oauth2 v0.35.0, golang.org/x/sync v0.20.0, golang.org/x/sys v0.41.0, golang.org/x/time v0.15.0, and the Go standard library (BSD 3-Clause; x/image's 7x13 font is from the public domain X11 misc-fixed fonts)
+golang.org/x/image v0.41.0, golang.org/x/oauth2 v0.35.0, golang.org/x/sync v0.20.0, golang.org/x/sys v0.41.0, golang.org/x/time v0.15.0, and the Go standard library (BSD 3-Clause; x/image's 7x13 font is from the public domain X11 misc-fixed fonts)
 ================================================================
 
 Copyright 2009 The Go Authors.
