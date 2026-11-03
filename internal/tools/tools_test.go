@@ -324,6 +324,31 @@ func TestParseTimeArg(t *testing.T) {
 	}
 }
 
+func TestTimeRangeAskedEarly(t *testing.T) {
+	// Asked at 12:10: "around noon" and "this morning" must not end up yesterday.
+	early := time.Date(2026, 11, 1, 12, 10, 0, 0, time.UTC)
+	at := func(h, m int) time.Time { return time.Date(2026, 11, 1, h, m, 0, 0, time.UTC) }
+	for _, tc := range []struct {
+		r             timeRange
+		after, before time.Time
+	}{
+		{timeRange{from: "11:30", to: "12:30"}, at(11, 30), early},
+		{timeRange{from: "06:00", to: "noon"}, at(6, 0), at(12, 0)},
+		{timeRange{from: "yesterday 20:00", to: "06:00"}, at(20, 0).AddDate(0, 0, -1), at(6, 0)},
+	} {
+		after, before, _, err := tc.r.resolve("24h", early)
+		if err != nil || !after.Equal(tc.after) || !before.Equal(tc.before) {
+			t.Errorf("%+v: got %v..%v %v", tc.r, after, before, err)
+		}
+	}
+	// Asked at 03:00: "last night" ends now, not yesterday morning.
+	night := time.Date(2026, 11, 1, 3, 0, 0, 0, time.UTC)
+	after, before, _, err := timeRange{from: "yesterday 20:00", to: "06:00"}.resolve("24h", night)
+	if err != nil || !after.Equal(at(20, 0).AddDate(0, 0, -1)) || !before.Equal(night) {
+		t.Errorf("last night at 03:00: %v..%v %v", after, before, err)
+	}
+}
+
 func TestTimeRange(t *testing.T) {
 	at := func(h, m int) time.Time { return time.Date(2026, 11, 1, h, m, 0, 0, time.UTC) }
 	midnight := at(0, 0)
@@ -342,7 +367,12 @@ func TestTimeRange(t *testing.T) {
 		{timeRange{since: "2h", to: "noon"}, "24h", at(10, 0), at(12, 0), "between today 10:00 and today 12:00"},
 		{timeRange{to: "noon"}, "", time.Time{}, at(12, 0), "up to today 12:00"},
 		{timeRange{from: "11:00", to: "today 23:00"}, "24h", at(11, 0), now, "since today 11:00"}, // to in the future: now
-		{timeRange{from: "2026-09-01 00:00", to: "noon"}, "24h", at(12, 0).Add(-maxRange), at(12, 0), "between Thu 1 Oct 12:00 and today 12:00"},
+		{timeRange{from: "2026-09-01 00:00", to: "today noon"}, "24h", at(12, 0).Add(-maxRange), at(12, 0), "between Thu 1 Oct 12:00 and today 12:00"},
+		// A to without a day is the first such time after from, never later than now (15:00).
+		{timeRange{from: "14:30", to: "15:30"}, "24h", at(14, 30), now, "since today 14:30"},
+		{timeRange{from: "06:00", to: "12:00"}, "24h", at(6, 0), at(12, 0), "between today 06:00 and today 12:00"},
+		{timeRange{from: "yesterday 20:00", to: "06:00"}, "24h", at(20, 0).AddDate(0, 0, -1), at(6, 0), "between yesterday 20:00 and today 06:00"},
+		{timeRange{from: "13:00", to: "12:00"}, "24h", at(13, 0), now, "since today 13:00"}, // overnight, capped at now
 	} {
 		after, before, label, err := tc.r.resolve(tc.def, now)
 		if err != nil || !after.Equal(tc.after) || !before.Equal(tc.before) || label != tc.label {
@@ -353,7 +383,7 @@ func TestTimeRange(t *testing.T) {
 		r    timeRange
 		want string
 	}{
-		{timeRange{from: "13:00", to: "12:00"}, "from (today 13:00) must be before to (today 12:00)"},
+		{timeRange{from: "today 13:00", to: "today 12:00"}, "from (today 13:00) must be before to (today 12:00)"},
 		{timeRange{from: "lunch"}, `from "lunch" not understood; use e.g. 11:30`},
 		{timeRange{to: "later"}, `to "later" not understood`},
 		{timeRange{from: "today 18:00"}, "from today 18:00 is in the future"},

@@ -24,7 +24,9 @@ All notable changes to this project are documented here. The format follows
   objects, using their snapshots with boxes.
 - `get_events` and `get_event_snapshot`: tracked objects filtered by camera, label, zone and time.
 - `from` and `to` on every list, grid and search tool, for a time of day ("around noon": `from: 11:30,
-  to: 12:30`); lists cut off at their limit end with the exact `to` for fetching older items.
+  to: 12:30`); lists cut off at their limit end with the exact `to` for fetching older items. A `to`
+  without a day is read relative to `from`, so ranges asked about before they end, or overnight,
+  work. `get_events` says how many it found.
 - `search_events`: semantic search, offered only while semantic search is enabled in Frigate.
 - Login with a Frigate user (viewer role is enough) and automatic re-login, or the internal port
   without login. Optional camera allowlist, bearer token, snapshot height, time zone, `/healthz`.

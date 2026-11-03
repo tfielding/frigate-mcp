@@ -120,7 +120,9 @@ const timeHelp = "use e.g. 11:30, 2pm, noon, yesterday 18:00 or 2026-10-30 09:15
 
 // resolve turns the arguments into [after, before). def is the default since ("" = no start).
 // With neither from nor to it's the same as window. Otherwise to (default now) is the end, and from
-// the start, or else since (or def) counted back from to.
+// the start, or else since (or def) counted back from to. A to without a day is the first such
+// time after from ("from 23:00 to 06:00" runs overnight; "from 11:30 to 12:30" asked at 12:10 is
+// 11:30 until now). The end is never later than now.
 func (r timeRange) resolve(def string, now time.Time) (after, before time.Time, label string, err error) {
 	if strings.TrimSpace(r.from) == "" && strings.TrimSpace(r.to) == "" {
 		if r.since == "" && def == "" {
@@ -128,21 +130,30 @@ func (r timeRange) resolve(def string, now time.Time) (after, before time.Time, 
 		}
 		return window(r.since, def, now)
 	}
+	if r.from != "" {
+		if after, _, err = parseTimeArgDay(r.from, now); err != nil {
+			return time.Time{}, time.Time{}, "", fmt.Errorf("from %q not understood; %s", r.from, timeHelp)
+		}
+		if after.After(now) {
+			return time.Time{}, time.Time{}, "", fmt.Errorf("from %s is in the future", r.from)
+		}
+	}
 	before = now
 	if r.to != "" {
-		if before, err = parseTimeArg(r.to, now); err != nil {
+		var explicit bool
+		if before, explicit, err = parseTimeArgDay(r.to, now); err != nil {
 			return time.Time{}, time.Time{}, "", fmt.Errorf("to %q not understood; %s", r.to, timeHelp)
+		}
+		if !explicit && !after.IsZero() {
+			before = time.Date(after.Year(), after.Month(), after.Day(), before.Hour(), before.Minute(), before.Second(), 0, now.Location())
+			if !before.After(after) {
+				before = before.AddDate(0, 0, 1)
+			}
 		}
 		before = minTime(before, now)
 	}
 	switch {
 	case r.from != "":
-		if after, err = parseTimeArg(r.from, now); err != nil {
-			return time.Time{}, time.Time{}, "", fmt.Errorf("from %q not understood; %s", r.from, timeHelp)
-		}
-		if r.to == "" && after.After(now) {
-			return time.Time{}, time.Time{}, "", fmt.Errorf("from %s is in the future", r.from)
-		}
 	case r.since != "" || def != "":
 		if after, _, _, err = window(r.since, def, before); err != nil {
 			return time.Time{}, time.Time{}, "", err
@@ -176,6 +187,12 @@ func minTime(a, b time.Time) time.Time {
 // "midnight", "14:05:30", optionally after "today", "yesterday" or a date (2026-10-30). Without a
 // day it's the most recent such time: at 10:00, "11:30" means yesterday 11:30.
 func parseTimeArg(s string, now time.Time) (time.Time, error) {
+	t, _, err := parseTimeArgDay(s, now)
+	return t, err
+}
+
+// parseTimeArgDay is parseTimeArg, also reporting whether s named the day.
+func parseTimeArgDay(s string, now time.Time) (time.Time, bool, error) {
 	s = strings.ToLower(strings.Join(strings.Fields(s), " "))
 	day, explicit := now, false
 	if rest, ok := strings.CutPrefix(s, "today"); ok {
@@ -193,7 +210,7 @@ func parseTimeArg(s string, now time.Time) (time.Time, error) {
 		h = 12
 	case "midnight", "":
 		if s == "" && !explicit {
-			return time.Time{}, errors.New("empty time")
+			return time.Time{}, false, errors.New("empty time")
 		}
 	default:
 		ampm := ""
@@ -205,33 +222,33 @@ func parseTimeArg(s string, now time.Time) (time.Time, error) {
 		}
 		parts := strings.Split(s, ":")
 		if len(parts) > 3 || (ampm == "" && len(parts) == 1) {
-			return time.Time{}, fmt.Errorf("bad time %q", s)
+			return time.Time{}, false, fmt.Errorf("bad time %q", s)
 		}
 		vals := make([]int, 3)
 		for i, p := range parts {
 			v, err := strconv.Atoi(p)
 			if err != nil || v < 0 || (i > 0 && (len(p) != 2 || v > 59)) {
-				return time.Time{}, fmt.Errorf("bad time %q", s)
+				return time.Time{}, false, fmt.Errorf("bad time %q", s)
 			}
 			vals[i] = v
 		}
 		h, m, sec = vals[0], vals[1], vals[2]
 		switch {
 		case ampm != "" && (h < 1 || h > 12):
-			return time.Time{}, fmt.Errorf("bad hour %d", h)
+			return time.Time{}, false, fmt.Errorf("bad hour %d", h)
 		case ampm == "p" && h < 12:
 			h += 12
 		case ampm == "a" && h == 12:
 			h = 0
 		case h > 23:
-			return time.Time{}, fmt.Errorf("bad hour %d", h)
+			return time.Time{}, false, fmt.Errorf("bad hour %d", h)
 		}
 	}
 	t := time.Date(day.Year(), day.Month(), day.Day(), h, m, sec, 0, now.Location())
 	if !explicit && t.After(now) {
 		t = t.AddDate(0, 0, -1)
 	}
-	return t, nil
+	return t, explicit, nil
 }
 
 // timeArg formats t so parseTimeArg reads it back exactly: "12:28:40", "yesterday 12:28:40" or

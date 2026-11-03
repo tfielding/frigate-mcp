@@ -411,6 +411,8 @@ func (t *Toolset) events(ctx context.Context, _ *mcp.CallToolRequest, in EventsI
 	} else {
 		if sel.full() {
 			fmt.Fprintf(&b, "Newest %d (there may be more):\n", sel.limit)
+		} else {
+			fmt.Fprintf(&b, "%d found, newest first:\n", len(sel.events))
 		}
 		for _, e := range sel.events {
 			b.WriteString(eventLine(e, sel.now))

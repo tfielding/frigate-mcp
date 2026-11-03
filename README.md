@@ -30,9 +30,11 @@ Tested against Frigate 0.18.
 
 `since` takes `30m`, `6h`, `2d`, `1w`, `today` or `yesterday` (default 24 hours, at most 31 days).
 For a time of day, `from` and `to` take times the way people say them: `11:30`, `2pm`, `noon`,
-`yesterday 18:00`, `2026-10-30 09:15`. "Cars around noon" is `from: 11:30, to: 12:30`. A time without a
-day is the most recent one, so at 10:00 `16:00` means yesterday. `to` alone ends the range there
-(with `since`, or 24 hours, counted back from it).
+`yesterday 18:00`, `2026-10-30 09:15`. "Cars around noon" is `from: 11:30, to: 12:30`. A `from`
+without a day is the most recent one, so at 10:00 `16:00` means yesterday; a `to` without a day is
+the first such time after `from` (`from: 23:00, to: 06:00` runs overnight), and the range never
+ends later than now, so "around noon" asked at 12:10 covers 11:30 until then. `to` alone ends the
+range there (with `since`, or 24 hours, counted back from it).
 
 Lists are newest first and stop at `limit`. When they do, the answer ends with the exact way to get
 the earlier ones, e.g. `For older ones, call again with the same arguments and to: 12:28:40`, so a
