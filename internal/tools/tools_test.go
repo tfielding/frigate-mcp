@@ -208,9 +208,9 @@ func TestTileLabel(t *testing.T) {
 	if got := tileLabel(at, "front_door", objects, time.UTC, true); got != "09:30 front_door (person, car)" {
 		t.Errorf("with camera: %q", got)
 	}
-	toronto, _ := time.LoadLocation("America/Toronto") // EST from 1 Nov 2026
-	if got := tileLabel(at, "front_door", nil, toronto, false); got != "04:30" {
-		t.Errorf("in Toronto, no objects: %q", got)
+	eastern, _ := time.LoadLocation("America/New_York") // EST from 1 Nov 2026
+	if got := tileLabel(at, "front_door", nil, eastern, false); got != "04:30" {
+		t.Errorf("US Eastern, no objects: %q", got)
 	}
 }
 
