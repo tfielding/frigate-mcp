@@ -67,6 +67,9 @@ func loadConfig() (config, error) {
 			return c, errors.New("GRID_BOXES must be true or false")
 		}
 	}
+	if c.opt.GridLabelCorner, err = tools.ParseCorner(os.Getenv("GRID_LABEL_POSITION")); err != nil {
+		return c, fmt.Errorf("GRID_LABEL_POSITION: %w", err)
+	}
 	if v := os.Getenv("GRID_CAMERA_LABELS"); v != "" {
 		if c.opt.GridCamera, err = strconv.ParseBool(v); err != nil {
 			return c, errors.New("GRID_CAMERA_LABELS must be true or false")

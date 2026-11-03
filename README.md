@@ -22,8 +22,10 @@ Tested against Frigate 0.18.
 | `get_alerts_grid` | optional `severity`, `camera`, `since`, `limit` (default 6, at most 9) | One numbered grid picture of the newest items (JPEG), plus the same list as `get_alerts` with matching numbers |
 | `get_alert_snapshot` | `id` from `get_alerts` | The picture for that item (JPEG) |
 | `list_events` | optional `camera`, `label`, `zone`, `since`, `limit` | Tracked objects, newest first |
+| `get_events_grid` | same as `list_events`, `limit` default 6, at most 9 | One numbered grid of the objects' snapshots with boxes (JPEG), plus the same list as `list_events` |
 | `get_event_snapshot` | `id` from `list_events` / `search_events` | The object's saved snapshot with its box drawn (JPEG) |
 | `search_events` | `query`, optional `camera`, `since`, `limit` | Best matches by appearance. **Only offered while semantic search is enabled in Frigate** |
+| `search_events_grid` | same as `search_events`, `limit` default 6, at most 9 | One numbered grid of the best matches' snapshots with boxes (JPEG), plus the list. **Only with semantic search, like `search_events`** |
 
 `since` takes `30m`, `6h`, `2d`, `1w`, `today` or `yesterday` (default 24 hours, at most 31 days).
 Camera, label and zone names are checked against Frigate's config and matched loosely (`Front Door`
@@ -62,7 +64,11 @@ grid fits within `SNAPSHOT_HEIGHT` (at least 360 pixels tall, 1080 when `SNAPSHO
 and each picture is fetched from Frigate at its tile size. By default each tile is the snapshot of one
 of the item's objects with its box drawn by Frigate (so with several objects, one is boxed), falling
 back to the recorded frame when the camera has no snapshots; `GRID_BOXES=false` uses the recorded
-frame first, like `get_alert_snapshot`. Pictures keep their shape, so portrait
+frame first, like `get_alert_snapshot`.
+
+`get_events_grid` and `search_events_grid` work the same way for tracked objects ("show me all the
+cars today", "show me red trucks"), always using the objects' snapshots with boxes. `get_events_grid`
+needs only regular object detection; objects without a saved snapshot get an empty tile. Pictures keep their shape, so portrait
 doorbells and panoramic cameras are letterboxed. An item with no picture gets an empty tile.
 
 If [GenAI review descriptions](https://docs.frigate.video/configuration/genai/genai_review) are configured in
@@ -108,6 +114,7 @@ Use one of Frigate's two API ports:
 | `CAMERAS` | all | Comma-separated allowlist (case-insensitive) |
 | `SNAPSHOT_HEIGHT` | `720` | Image height in pixels; `0` = native. Also the height `get_alerts_grid` fits in |
 | `GRID_BOXES` | `true` | `get_alerts_grid` shows object snapshots with boxes; `false` for plain recorded frames |
+| `GRID_LABEL_POSITION` | `bottom-left` | Corner for grid tile labels: `top-left`, `top-right`, `bottom-left` or `bottom-right`. Pick one clear of Frigate's timestamp and your cameras' own on-screen text |
 | `GRID_CAMERA_LABELS` | `false` | Also write the camera name on `get_alerts_grid` tiles |
 | `TZ` | UTC | Time zone for times shown to the model, e.g. `America/New_York` |
 | `AUTH_TOKEN` | none | Require `Authorization: Bearer <token>` on `/mcp` |

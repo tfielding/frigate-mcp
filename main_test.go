@@ -257,7 +257,7 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) map[string]bool {
 
 func TestToolsAreListedReadOnly(t *testing.T) {
 	names := toolNames(t, start(t, config{}, nil))
-	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "list_events", "get_event_snapshot"}
+	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "list_events", "get_events_grid", "get_event_snapshot"}
 	for _, n := range want {
 		if !names[n] {
 			t.Errorf("missing %s", n)
@@ -270,8 +270,8 @@ func TestToolsAreListedReadOnly(t *testing.T) {
 
 func TestSearchOnlyWithSemanticSearch(t *testing.T) {
 	cs := start(t, config{}, &fakeFrigate{semantic: true})
-	if !toolNames(t, cs)["search_events"] {
-		t.Fatal("search_events missing although semantic search is enabled")
+	if names := toolNames(t, cs); !names["search_events"] || !names["search_events_grid"] {
+		t.Fatalf("search tools missing although semantic search is enabled: %v", names)
 	}
 	res := call(t, cs, "search_events", map[string]any{"query": "red truck", "camera": "Driveway"})
 	if res.IsError || !strings.Contains(text(res), `Best matches for "red truck", all retained history`) {
@@ -496,6 +496,67 @@ func TestAlertsGridPrefersBoxedSnapshots(t *testing.T) {
 	}
 }
 
+func TestEventsGrid(t *testing.T) {
+	fake := &fakeFrigate{}
+	cs := start(t, config{}, fake)
+	res := call(t, cs, "get_events_grid", map[string]any{"since": "today"})
+	got := text(res)
+	for _, s := range []string{
+		"Tracked objects, today. Times are UTC.\n",
+		"Pictures numbered as in the grid (left to right, top to bottom), newest first:\n",
+		"1. today 14:00 (6m00s), driveway: car 86%; zones: driveway; plate: ABC123; id e-car\n",
+		"2. today 12:00 (ongoing), front_door: person 86%; zones: porch; no snapshot; id e-person\n",
+		"1 item has no picture (shown as an empty tile).\n",
+		"Use get_event_snapshot with an id for a bigger picture of one.\n",
+	} {
+		if !strings.Contains(got, s) {
+			t.Errorf("missing %q in:\n%s", s, got)
+		}
+	}
+	if b := decodeJPEG(t, imageOf(res)).Bounds(); b.Dx() != 1280 || b.Dy() != 358 {
+		t.Errorf("grid size %v", b)
+	}
+	// Only the object with a snapshot is fetched, with its box, at tile height; the limit asked of
+	// Frigate is the grid's.
+	var fetched []string
+	for _, q := range fake.requests {
+		if strings.HasSuffix(strings.Split(q, "?")[0], ".jpg") {
+			fetched = append(fetched, q)
+		}
+		if strings.HasPrefix(q, "/api/events?") && !strings.Contains(q, "limit=6") {
+			t.Errorf("events query %s", q)
+		}
+	}
+	if len(fetched) != 1 || fetched[0] != "/api/events/e-car/snapshot.jpg?bbox=1&height=358" {
+		t.Errorf("pictures fetched: %v", fetched)
+	}
+
+	res = call(t, cs, "get_events_grid", map[string]any{"label": "unicorn"})
+	if !res.IsError || !strings.Contains(text(res), "tracked labels: car, dog, person, speech") {
+		t.Fatalf("got %s", text(res))
+	}
+	res = call(t, cs, "get_events_grid", map[string]any{"limit": 2})
+	if !strings.Contains(text(res), "Pictures of the newest 2 (there may be more)") {
+		t.Fatalf("got %s", text(res))
+	}
+}
+
+func TestSearchGrid(t *testing.T) {
+	cs := start(t, config{}, &fakeFrigate{semantic: true})
+	res := call(t, cs, "search_events_grid", map[string]any{"query": "red truck"})
+	got := text(res)
+	if res.IsError || imageOf(res) == nil ||
+		!strings.Contains(got, `Best matches for "red truck", all retained history.`) ||
+		!strings.Contains(got, "Pictures of the best matches first") ||
+		!strings.Contains(got, "1. today 14:00 (6m00s), driveway: car") {
+		t.Fatalf("got %s", got)
+	}
+	res = call(t, cs, "search_events_grid", map[string]any{"query": " "})
+	if !res.IsError || !strings.Contains(text(res), "query is required") {
+		t.Fatalf("got %s", text(res))
+	}
+}
+
 func TestAlertsGridHonorsAllowlist(t *testing.T) {
 	fake := &fakeFrigate{}
 	cs := start(t, config{opt: tools.Options{Allowed: map[string]bool{"driveway": true}}}, fake)
@@ -652,6 +713,18 @@ func TestLoadConfig(t *testing.T) {
 		c.opt.GridCamera || !c.opt.GridBoxes {
 		t.Fatalf("got %+v", c)
 	}
+	if c.opt.GridLabelCorner != tools.BottomLeft {
+		t.Fatalf("default label position: %q", c.opt.GridLabelCorner)
+	}
+	t.Setenv("GRID_LABEL_POSITION", "Top Right")
+	if c, err = loadConfig(); err != nil || c.opt.GridLabelCorner != tools.TopRight {
+		t.Fatalf("GRID_LABEL_POSITION=Top Right: %q %v", c.opt.GridLabelCorner, err)
+	}
+	t.Setenv("GRID_LABEL_POSITION", "middle")
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "use top-left, top-right") {
+		t.Fatalf("GRID_LABEL_POSITION=middle: %v", err)
+	}
+	t.Setenv("GRID_LABEL_POSITION", "")
 	t.Setenv("GRID_BOXES", "false")
 	if c, err = loadConfig(); err != nil || c.opt.GridBoxes {
 		t.Fatalf("GRID_BOXES=false: %+v %v", c.opt, err)

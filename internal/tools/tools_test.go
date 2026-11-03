@@ -144,37 +144,71 @@ func TestRenderDrawsPicturesAndLabels(t *testing.T) {
 		r, g, bl, _ := img.At(x, y).RGBA()
 		return bl > 0xc000 && r < 0x4000 && g < 0x4000
 	}
-	if !isBlue(l.cellW/2, l.cellH-10) {
+	if !isBlue(l.cellW/2, l.cellH/2) {
 		t.Error("first tile isn't the picture")
 	}
-	if isBlue(l.cellW+gridGap+l.cellW/2, l.cellH-10) {
+	if isBlue(l.cellW+gridGap+l.cellW/2, l.cellH/4) {
 		t.Error("missing picture drawn")
 	}
-	if isBlue(2, 2) {
-		t.Error("no label in the first tile's corner")
+	if isBlue(2, l.cellH-3) || !isBlue(2, 2) {
+		t.Error("label not in the first tile's bottom-left corner (only)")
+	}
+}
+
+func TestLabelCorners(t *testing.T) {
+	blue := image.NewUniform(color.RGBA{0, 0, 255, 255})
+	pic := image.NewRGBA(image.Rect(0, 0, 640, 360))
+	draw.Draw(pic, pic.Bounds(), blue, image.Point{}, draw.Src)
+	l := newLayout(1, 720)
+	for corner, at := range map[Corner]image.Point{
+		TopLeft:     {3, 3},
+		TopRight:    {l.cellW - 3, 3},
+		BottomLeft:  {3, l.cellH - 3},
+		BottomRight: {l.cellW - 3, l.cellH - 3},
+	} {
+		l.corner = corner
+		b, err := l.render([]image.Image{pic}, []string{"1) 14:12 (person)"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		img, _ := jpeg.Decode(bytes.NewReader(b))
+		labelled := 0
+		for _, p := range []image.Point{{3, 3}, {l.cellW - 3, 3}, {3, l.cellH - 3}, {l.cellW - 3, l.cellH - 3}} {
+			if _, _, bl, _ := img.At(p.X, p.Y).RGBA(); bl < 0x8000 {
+				labelled++
+				if p != at {
+					t.Errorf("%s: label found at %v", corner, p)
+				}
+			}
+		}
+		if labelled != 1 {
+			t.Errorf("%s: %d corners labelled", corner, labelled)
+		}
+	}
+	for in, want := range map[string]Corner{"": BottomLeft, "TR": TopRight, "top_left": TopLeft, "bottom right": BottomRight} {
+		if got, err := ParseCorner(in); err != nil || got != want {
+			t.Errorf("ParseCorner(%q) = %q, %v", in, got, err)
+		}
 	}
 }
 
 func TestTileLabel(t *testing.T) {
-	r := frigate.Review{Camera: "front_door"}
-	r.Data.Objects = []string{"person", "car", "person"}
+	objects := []string{"person", "car"}
 	for in, want := range map[time.Time]string{
-		time.Date(2026, 11, 1, 14, 12, 0, 0, time.UTC): "3) 14:12 (person, car)",
-		time.Date(2026, 11, 1, 0, 5, 0, 0, time.UTC):   "3) 00:05 (person, car)",
-		time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC):  "3) 09:30 (person, car)",
+		time.Date(2026, 11, 1, 14, 12, 0, 0, time.UTC): "14:12 (person, car)",
+		time.Date(2026, 11, 1, 0, 5, 0, 0, time.UTC):   "00:05 (person, car)",
+		time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC):  "09:30 (person, car)",
 	} {
-		r.Start = frigate.Time{Time: in}
-		if got := tileLabel(3, r, time.UTC, false); got != want {
+		if got := tileLabel(in, "front_door", objects, time.UTC, false); got != want {
 			t.Errorf("tileLabel(%v) = %q, want %q", in, got, want)
 		}
 	}
-	r.Start = frigate.Time{Time: time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC)}
-	if got := tileLabel(1, r, time.UTC, true); got != "1) 09:30 front_door (person, car)" {
+	at := time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC)
+	if got := tileLabel(at, "front_door", objects, time.UTC, true); got != "09:30 front_door (person, car)" {
 		t.Errorf("with camera: %q", got)
 	}
 	toronto, _ := time.LoadLocation("America/Toronto") // EST from 1 Nov 2026
-	r.Data.Objects = nil
-	if got := tileLabel(1, r, toronto, false); got != "1) 04:30" {
+	if got := tileLabel(at, "front_door", nil, toronto, false); got != "04:30" {
 		t.Errorf("in Toronto, no objects: %q", got)
 	}
 }

@@ -28,12 +28,13 @@ type Source interface {
 }
 
 type Options struct {
-	Allowed        map[string]bool // lowercased camera names; empty = all cameras
-	SnapshotHeight int             // image height in pixels; 0 = native
-	GridCamera     bool            // show the camera name on get_alerts_grid tiles
-	GridBoxes      bool            // get_alerts_grid prefers object snapshots with boxes over recorded frames
-	Location       *time.Location  // time zone for times shown to the model
-	Now            func() time.Time
+	Allowed         map[string]bool // lowercased camera names; empty = all cameras
+	SnapshotHeight  int             // image height in pixels; 0 = native
+	GridCamera      bool            // show the camera name on get_alerts_grid tiles
+	GridBoxes       bool            // get_alerts_grid prefers object snapshots with boxes over recorded frames
+	GridLabelCorner Corner          // where grid tile labels go; empty = bottom-left
+	Location        *time.Location  // time zone for times shown to the model
+	Now             func() time.Time
 }
 
 const (
@@ -115,10 +116,18 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 	}, t.alertSnapshot)
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "list_events",
-		Description: "List individual objects Frigate tracked (person, car, dog, ...), newest first, with time, camera, " +
-			"zones and an id. Use for questions like \"when was the last car in the driveway?\".",
+		Description: "Text only, no pictures. List individual objects Frigate tracked (person, car, dog, ...), newest first, " +
+			"with time, camera, zones and an id. Use for questions like \"when was the last car in the driveway?\". " +
+			"To show or see pictures of them, use get_events_grid instead.",
 		Annotations: readOnly("Frigate events"),
 	}, t.events)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_events_grid",
+		Description: "Show pictures of tracked objects (person, car, dog, ...): one image with the newest matching objects as " +
+			"a numbered grid (up to 9), each with its box drawn, plus a matching list with times and ids. Use whenever the " +
+			"user wants to see objects, e.g. \"show me all the cars today\". Takes the same filters as list_events.",
+		Annotations: readOnly("Events picture grid"),
+	}, t.eventsGrid)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_event_snapshot",
 		Description: "Show the saved snapshot (JPEG) of one tracked object from list_events or search_events, with its box drawn.",
@@ -157,16 +166,24 @@ func (t *Toolset) sync(ctx context.Context) {
 	case cat.semantic && !t.search:
 		mcp.AddTool(t.server, &mcp.Tool{
 			Name: "search_events",
-			Description: "Search tracked objects by what they look like, in plain words (\"red pickup truck\", \"person with a dog\"). " +
-				"Returns the best matches with time, camera and an id; use get_event_snapshot to show one.",
+			Description: "Text only, no pictures. Search tracked objects by what they look like, in plain words " +
+				"(\"red pickup truck\", \"person with a dog\"). Returns the best matches with time, camera and an id. " +
+				"To show or see pictures of the matches, use search_events_grid instead.",
 			Annotations: readOnly("Search events"),
 		}, t.searchEvents)
+		mcp.AddTool(t.server, &mcp.Tool{
+			Name: "search_events_grid",
+			Description: "Show pictures of tracked objects found by what they look like, in plain words (\"red pickup truck\", " +
+				"\"person with a dog\"): one image with the best matches as a numbered grid (up to 9), each with its box " +
+				"drawn, plus a matching list with times and ids. Use whenever the user wants to see the matches.",
+			Annotations: readOnly("Search picture grid"),
+		}, t.searchGrid)
 		t.search = true
-		slog.Info("semantic search enabled in frigate: search_events available")
+		slog.Info("semantic search enabled in frigate: search_events and search_events_grid available")
 	case !cat.semantic && t.search:
-		t.server.RemoveTools("search_events")
+		t.server.RemoveTools("search_events", "search_events_grid")
 		t.search = false
-		slog.Info("semantic search disabled in frigate: search_events removed")
+		slog.Info("semantic search disabled in frigate: search_events and search_events_grid removed")
 	}
 }
 
@@ -364,39 +381,71 @@ func (t *Toolset) reviewPicture(ctx context.Context, r *frigate.Review, height i
 }
 
 func (t *Toolset) events(ctx context.Context, _ *mcp.CallToolRequest, in EventsInput) (*mcp.CallToolResult, any, error) {
+	sel, err := t.selectEvents(ctx, in, clamp(in.Limit, defaultLimit, maxLimit))
+	if err != nil {
+		return nil, nil, err
+	}
+	var b strings.Builder
+	b.WriteString(sel.header)
+	if len(sel.events) == 0 {
+		b.WriteString("None found.\n")
+	} else {
+		if len(sel.events) == sel.limit {
+			fmt.Fprintf(&b, "Newest %d (there may be more):\n", sel.limit)
+		}
+		for _, e := range sel.events {
+			b.WriteString(eventLine(e, sel.now))
+		}
+		b.WriteString("Use get_event_snapshot with an id to show the picture, or get_events_grid to see several at once.\n")
+	}
+	slog.Info("list_events", "found", len(sel.events))
+	return text(b.String()), nil, nil
+}
+
+// eventSelection is the result of an event query or search, shared by the list and grid tools.
+type eventSelection struct {
+	header string // first line(s) of the answer: what was asked for, and the time zone
+	events []frigate.Event
+	limit  int
+	now    time.Time
+}
+
+// selectEvents runs the tracked-object query behind list_events and get_events_grid.
+func (t *Toolset) selectEvents(ctx context.Context, in EventsInput, limit int) (eventSelection, error) {
+	sel := eventSelection{limit: limit}
 	cat, err := t.cat.get(ctx)
 	if err != nil {
-		return nil, nil, unavailable(err)
+		return sel, unavailable(err)
 	}
-	now := t.opt.Now().In(t.opt.Location)
-	after, before, period, err := window(in.Since, "24h", now)
+	sel.now = t.opt.Now().In(t.opt.Location)
+	after, before, period, err := window(in.Since, "24h", sel.now)
 	if err != nil {
-		return nil, nil, err
+		return sel, err
 	}
-	f := frigate.Filter{After: after, Before: before, Limit: clamp(in.Limit, defaultLimit, maxLimit)}
+	f := frigate.Filter{After: after, Before: before, Limit: limit}
 	if f.Cameras, err = cat.filterCameras(in.Camera, len(t.opt.Allowed) > 0); err != nil {
-		return nil, nil, err
+		return sel, err
 	}
 	if in.Label != "" {
 		l, err := cat.label(in.Label)
 		if err != nil {
-			return nil, nil, err
+			return sel, err
 		}
 		f.Labels = []string{l}
 	}
 	if in.Zone != "" {
 		z, err := cat.zone(in.Zone)
 		if err != nil {
-			return nil, nil, err
+			return sel, err
 		}
 		f.Zones = []string{z}
 	}
 	evs, err := t.src.Events(ctx, f)
 	if err != nil {
-		slog.Error("list_events", "err", err)
-		return nil, nil, unavailable(err)
+		slog.Error("event query", "err", err)
+		return sel, unavailable(err)
 	}
-	evs = visibleEvents(evs, cat)
+	sel.events = visibleEvents(evs, cat)
 
 	var b strings.Builder
 	what := "Tracked objects"
@@ -410,20 +459,9 @@ func (t *Toolset) events(ctx context.Context, _ *mcp.CallToolRequest, in EventsI
 	if len(f.Zones) > 0 {
 		fmt.Fprintf(&b, ", zone %s", f.Zones[0])
 	}
-	fmt.Fprintf(&b, ". Times are %s.\n", now.Format("MST"))
-	if len(evs) == 0 {
-		b.WriteString("None found.\n")
-	} else {
-		if len(evs) == f.Limit {
-			fmt.Fprintf(&b, "Newest %d (there may be more):\n", f.Limit)
-		}
-		for _, e := range evs {
-			b.WriteString(eventLine(e, now))
-		}
-		b.WriteString("Use get_event_snapshot with an id to show the picture.\n")
-	}
-	slog.Info("list_events", "since", period, "label", strings.Join(f.Labels, ","), "found", len(evs))
-	return text(b.String()), nil, nil
+	fmt.Fprintf(&b, ". Times are %s.\n", sel.now.Format("MST"))
+	sel.header = b.String()
+	return sel, nil
 }
 
 func eventLine(e frigate.Event, now time.Time) string {
@@ -485,43 +523,54 @@ func (t *Toolset) eventSnapshot(ctx context.Context, _ *mcp.CallToolRequest, in 
 }
 
 func (t *Toolset) searchEvents(ctx context.Context, _ *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, any, error) {
+	sel, err := t.selectSearch(ctx, in, clamp(in.Limit, searchLimit, maxSearch))
+	if err != nil {
+		return nil, nil, err
+	}
+	var b strings.Builder
+	b.WriteString(sel.header)
+	if len(sel.events) == 0 {
+		b.WriteString("No matches.\n")
+	} else {
+		for _, e := range sel.events {
+			b.WriteString(eventLine(e, sel.now))
+		}
+		b.WriteString("Matches are by appearance and may be wrong; check with get_event_snapshot, or search_events_grid to see several at once.\n")
+	}
+	slog.Info("search_events", "found", len(sel.events))
+	return text(b.String()), nil, nil
+}
+
+// selectSearch runs the semantic search behind search_events and search_events_grid.
+func (t *Toolset) selectSearch(ctx context.Context, in SearchInput, limit int) (eventSelection, error) {
+	sel := eventSelection{limit: limit}
 	query := strings.TrimSpace(in.Query)
 	if query == "" {
-		return nil, nil, errors.New("query is required, e.g. \"red pickup truck\"")
+		return sel, errors.New("query is required, e.g. \"red pickup truck\"")
 	}
 	cat, err := t.cat.get(ctx)
 	if err != nil {
-		return nil, nil, unavailable(err)
+		return sel, unavailable(err)
 	}
-	now := t.opt.Now().In(t.opt.Location)
-	f := frigate.Filter{Limit: clamp(in.Limit, searchLimit, maxSearch)}
+	sel.now = t.opt.Now().In(t.opt.Location)
+	f := frigate.Filter{Limit: limit}
 	period := "all retained history"
 	if in.Since != "" {
-		if f.After, f.Before, period, err = window(in.Since, "", now); err != nil {
-			return nil, nil, err
+		if f.After, f.Before, period, err = window(in.Since, "", sel.now); err != nil {
+			return sel, err
 		}
 	}
 	if f.Cameras, err = cat.filterCameras(in.Camera, len(t.opt.Allowed) > 0); err != nil {
-		return nil, nil, err
+		return sel, err
 	}
 	evs, err := t.src.Search(ctx, query, f)
 	if err != nil {
-		slog.Error("search_events", "err", err)
-		return nil, nil, unavailable(err)
+		slog.Error("search", "err", err)
+		return sel, unavailable(err)
 	}
-	evs = visibleEvents(evs, cat)
-	var b strings.Builder
-	fmt.Fprintf(&b, "Best matches for %q, %s. Times are %s.\n", query, period, now.Format("MST"))
-	if len(evs) == 0 {
-		b.WriteString("No matches.\n")
-	} else {
-		for _, e := range evs {
-			b.WriteString(eventLine(e, now))
-		}
-		b.WriteString("Matches are by appearance and may be wrong; check with get_event_snapshot.\n")
-	}
-	slog.Info("search_events", "found", len(evs))
-	return text(b.String()), nil, nil
+	sel.events = visibleEvents(evs, cat)
+	sel.header = fmt.Sprintf("Best matches for %q, %s. Times are %s.\n", query, period, sel.now.Format("MST"))
+	return sel, nil
 }
 
 func visibleEvents(evs []frigate.Event, cat *catalog) []frigate.Event {
@@ -543,6 +592,10 @@ func unavailable(err error) error {
 		return errors.New("frigate-mcp can't log in to Frigate (details in the frigate-mcp log)")
 	}
 	return errors.New("frigate is unreachable or returned an error (details in the frigate-mcp log)")
+}
+
+func errorResult(s string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: s}}}
 }
 
 func text(s string) *mcp.CallToolResult {
