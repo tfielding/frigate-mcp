@@ -19,48 +19,65 @@ import (
 // maxTimelineObjects bounds how many objects of one alert get a timeline.
 const maxTimelineObjects = 5
 
-func (t *Toolset) eventTimeline(ctx context.Context, _ *mcp.CallToolRequest, in IDInput) (*mcp.CallToolResult, any, error) {
-	id := strings.TrimSpace(in.ID)
+// objects is what an id stands for: a tracked object, or an alert and its objects.
+type objects struct {
+	ids    []string // tracked objects, at most maxTimelineObjects
+	camera string
+	what   string    // the object's label, or the alert's objects
+	start  time.Time // when it began
+	single *frigate.Event
+}
+
+// resolveObjects looks id up as a tracked object, then as an alert. Errors are ready for the
+// model; tool names the calling tool in the log.
+func (t *Toolset) resolveObjects(ctx context.Context, tool, id string) (objects, error) {
+	var o objects
+	id = strings.TrimSpace(id)
 	if id == "" {
-		return nil, nil, errors.New("id is required; get it from get_events, last_seen or get_alerts")
+		return o, errors.New("id is required; get it from get_events, last_seen or get_alerts")
 	}
 	cat, err := t.cat.get(ctx)
 	if err != nil {
-		return nil, nil, unavailable(err)
+		return o, unavailable(err)
 	}
-	// An id is a tracked object's or an alert's: an alert's timeline is that of its objects.
-	var ids []string
-	var camera, what string
-	var start time.Time
-	var single *frigate.Event // the object, when id is one
+	notFound := fmt.Errorf("no tracked object or alert with id %q; get ids from get_events, last_seen or get_alerts", id)
 	e, err := t.src.Event(ctx, id)
 	switch {
 	case err == nil:
-		single = e
-		ids, camera, what, start = []string{e.ID}, e.Camera, e.Label, e.Start.Time
+		o = objects{ids: []string{e.ID}, camera: e.Camera, what: e.Label, start: e.Start.Time, single: e}
 	case errors.Is(err, frigate.ErrNotFound):
 		r, rerr := t.src.Review(ctx, id)
 		if errors.Is(rerr, frigate.ErrNotFound) {
-			return nil, nil, fmt.Errorf("no tracked object or alert with id %q; get ids from get_events, last_seen or get_alerts", id)
+			return o, notFound
 		}
 		if rerr != nil {
-			slog.Error("get_event_timeline", "id", id, "err", rerr)
-			return nil, nil, unavailable(rerr)
+			slog.Error(tool, "id", id, "err", rerr)
+			return o, unavailable(rerr)
 		}
-		ids, camera, what, start = r.Data.Detections, r.Camera, strings.Join(dedupe(r.Data.Objects), ", "), r.Start.Time
-		if len(ids) > maxTimelineObjects {
-			ids = ids[:maxTimelineObjects]
+		o = objects{ids: r.Data.Detections, camera: r.Camera, what: strings.Join(dedupe(r.Data.Objects), ", "), start: r.Start.Time}
+		if len(o.ids) > maxTimelineObjects {
+			o.ids = o.ids[:maxTimelineObjects]
 		}
 	default:
-		slog.Error("get_event_timeline", "id", id, "err", err)
-		return nil, nil, unavailable(err)
+		slog.Error(tool, "id", id, "err", err)
+		return o, unavailable(err)
 	}
-	if !cat.visible(camera) {
-		return nil, nil, fmt.Errorf("no tracked object or alert with id %q; get ids from get_events, last_seen or get_alerts", id)
+	if !cat.visible(o.camera) {
+		return objects{}, notFound
 	}
-	if len(ids) == 0 {
-		return nil, nil, fmt.Errorf("%s has no tracked objects to follow", id)
+	if len(o.ids) == 0 {
+		return o, fmt.Errorf("%s has no tracked objects to follow", id)
 	}
+	return o, nil
+}
+
+func (t *Toolset) eventTimeline(ctx context.Context, _ *mcp.CallToolRequest, in IDInput) (*mcp.CallToolResult, any, error) {
+	id := strings.TrimSpace(in.ID)
+	o, err := t.resolveObjects(ctx, "get_event_timeline", id)
+	if err != nil {
+		return nil, nil, err
+	}
+	ids, camera, what, start, single := o.ids, o.camera, o.what, o.start, o.single
 	entries, err := t.src.Timeline(ctx, ids, 100*len(ids))
 	if err != nil {
 		slog.Error("get_event_timeline", "id", id, "err", err)

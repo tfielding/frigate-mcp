@@ -179,6 +179,15 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 			"for \"did they come to the door or just walk past?\" or \"how long was the car there?\".",
 		Annotations: readOnly("Event timeline"),
 	}, t.eventTimeline)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_event_frames",
+		Description: "Pictures of a tracked object at up to four moments of its visit, from the recordings, in one image: " +
+			"when it was first seen, when it entered a zone, while it was there, and when it was last seen, each zoomed in " +
+			"on it. Shows whether something really walked up (a real visitor) or just appeared in one place (often a " +
+			"false detection), better than a single snapshot. Takes an id from get_events, last_seen or get_alerts (for " +
+			"an alert, its first object). Needs recordings.",
+		Annotations: readOnly("Event frames"),
+	}, t.eventFrames)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_system_status",

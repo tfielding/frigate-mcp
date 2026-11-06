@@ -364,7 +364,7 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) map[string]bool {
 func TestToolsAreListedReadOnly(t *testing.T) {
 	names := toolNames(t, start(t, config{}, nil))
 	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "get_events", "get_events_grid", "get_event_snapshot",
-		"get_system_status", "get_camera_frame", "last_seen", "get_alert_clip", "get_event_timeline"}
+		"get_system_status", "get_camera_frame", "last_seen", "get_alert_clip", "get_event_timeline", "get_event_frames"}
 	for _, n := range want {
 		if !names[n] {
 			t.Errorf("missing %s", n)
@@ -1239,5 +1239,51 @@ func TestEventTimelineFalseDetection(t *testing.T) {
 	got := text(res)
 	if res.IsError || !strings.Contains(got, "\nFrigate's top confidence 58%; appeared already inside porch; stayed in one place.\n") {
 		t.Fatalf("got:\n%s", got)
+	}
+}
+
+func TestEventFrames(t *testing.T) {
+	fake := &fakeFrigate{}
+	cs := start(t, config{}, fake)
+	res := call(t, cs, "get_event_frames", map[string]any{"id": "e-person"})
+	if res.IsError {
+		t.Fatalf("got %s", text(res))
+	}
+	want := "Person on front_door at 4 moments, from the recordings, each zoomed in on it (left to right, top to bottom):\n" +
+		"1. 12:00:00: first seen\n2. 12:00:05: entered porch\n3. 12:00:29: while there\n4. 12:00:53: last seen"
+	if got := text(res); got != want {
+		t.Errorf("caption:\n%s\nwant:\n%s", got, want)
+	}
+	if img := decodeJPEG(t, imageOf(res)); img.Bounds().Dx() < 200 {
+		t.Errorf("grid is %v", img.Bounds())
+	}
+	var recs []string
+	fake.mu.Lock()
+	for _, q := range fake.requests {
+		if strings.Contains(q, "/recordings/") {
+			recs = append(recs, q)
+		}
+	}
+	fake.mu.Unlock()
+	t0 := ts(3)
+	if len(recs) != 4 || !strings.HasPrefix(recs[0], fmt.Sprintf("/api/front_door/recordings/%.3f/snapshot.jpg", t0)) ||
+		!strings.HasPrefix(recs[3], fmt.Sprintf("/api/front_door/recordings/%.3f/snapshot.jpg", t0+53)) {
+		t.Errorf("recordings asked for: %v", recs)
+	}
+
+	// Appearing in place: the zone entry is the same moment as first seen, so 3 moments.
+	res = call(t, cs, "get_event_frames", map[string]any{"id": "e-ghost"})
+	if got := text(res); res.IsError || !strings.Contains(got, "at 3 moments") || strings.Contains(got, "entered porch") {
+		t.Errorf("ghost: %s", got)
+	}
+
+	// No recordings, or no timeline.
+	res = call(t, start(t, config{}, &fakeFrigate{noRecs: true}), "get_event_frames", map[string]any{"id": "e-person"})
+	if !res.IsError || !strings.Contains(text(res), "no recorded frames for e-person on front_door") {
+		t.Errorf("no recordings: %s", text(res))
+	}
+	res = call(t, cs, "get_event_frames", map[string]any{"id": "e-car"})
+	if !res.IsError || !strings.Contains(text(res), "no timeline for e-car") {
+		t.Errorf("no timeline: %s", text(res))
 	}
 }
