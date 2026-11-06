@@ -7,7 +7,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -88,13 +90,17 @@ func loadConfig() (config, error) {
 
 func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	healthcheck := flag.Bool("healthcheck", false, "check the running server's /healthz and exit 0 if healthy (for Docker's HEALTHCHECK)")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: frigate-mcp [-version]\n\nConfigured with environment variables; see the README.\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: frigate-mcp [-version] [-healthcheck]\n\nConfigured with environment variables; see the README.\n")
 	}
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("frigate-mcp", version)
 		return
+	}
+	if *healthcheck {
+		os.Exit(checkHealth(env("LISTEN_ADDR", ":8091")))
 	}
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
@@ -153,6 +159,40 @@ func newHandler(ctx context.Context, src *frigate.Client, cfg config) (http.Hand
 		w.Write([]byte("ok\n"))
 	})
 	return mux, ts
+}
+
+// checkHealth asks the server listening on listen for /healthz, prints the answer, and returns
+// the exit code: 0 when healthy. The image has no shell or curl, so Docker runs this instead.
+func checkHealth(listen string) int {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get("http://" + localAddr(listen) + "/healthz")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "unhealthy:", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	fmt.Print(string(body))
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
+}
+
+// localAddr is where to reach a listen address from the same machine: ":8091" and
+// "0.0.0.0:8091" become "127.0.0.1:8091".
+func localAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	switch host {
+	case "", "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	return net.JoinHostPort(host, port)
 }
 
 // requireToken enforces "Authorization: Bearer <token>" when a token is configured.

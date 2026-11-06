@@ -3,6 +3,11 @@ services:
     container_name: frigate-mcp
     image: ghcr.io/tfielding/frigate-mcp:latest
     restart: always
+    healthcheck:
+      test: ["CMD", "/frigate-mcp", "-healthcheck"]
+      interval: 1m
+      timeout: 15s
+      start_period: 30s
     environment:
       - FRIGATE_URL=https://<frigate-host>:8971
       - FRIGATE_USERNAME=mcp                # a Frigate user with the viewer role

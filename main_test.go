@@ -1188,3 +1188,35 @@ func TestEventTimeline(t *testing.T) {
 		}
 	}
 }
+
+func TestHealthcheckFlag(t *testing.T) {
+	healthy := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" || !healthy {
+			http.Error(w, "unreachable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Write([]byte("ok\n"))
+	}))
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	if code := checkHealth(addr); code != 0 {
+		t.Errorf("healthy: exit %d", code)
+	}
+	healthy = false
+	if code := checkHealth(addr); code != 1 {
+		t.Errorf("unhealthy: exit %d", code)
+	}
+	srv.Close()
+	if code := checkHealth(addr); code != 1 {
+		t.Errorf("not running: exit %d", code)
+	}
+
+	for in, want := range map[string]string{
+		":8091": "127.0.0.1:8091", "0.0.0.0:8091": "127.0.0.1:8091", "[::]:8091": "[::1]:8091",
+		"192.0.2.5:8091": "192.0.2.5:8091",
+	} {
+		if got := localAddr(in); got != want {
+			t.Errorf("localAddr(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

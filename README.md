@@ -187,6 +187,11 @@ services:
   frigate-mcp:
     image: ghcr.io/tfielding/frigate-mcp:latest
     restart: always
+    healthcheck:
+      test: ["CMD", "/frigate-mcp", "-healthcheck"]
+      interval: 1m
+      timeout: 15s
+      start_period: 30s
     environment:
       - FRIGATE_URL=https://<frigate-host>:8971
       - FRIGATE_USERNAME=mcp
@@ -196,7 +201,10 @@ services:
 ```
 
 MCP clients on the same Docker network connect to `http://frigate-mcp:8091/mcp`.
-`GET /healthz` returns 200 when Frigate is reachable and the login works.
+`GET /healthz` returns 200 when Frigate is reachable and the login works. The image has no shell or
+curl, so the `healthcheck:` above runs `frigate-mcp -healthcheck`, which checks `/healthz` from inside
+the container. With it, other services can wait for frigate-mcp with
+`depends_on: {frigate-mcp: {condition: service_healthy}}`.
 
 Quick check that the user works, before involving MCP at all:
 

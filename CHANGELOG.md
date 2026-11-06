@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `-healthcheck` flag for Docker's `healthcheck:`: checks the running server's `/healthz` from inside the
+  container (the image has no shell or curl) and exits 0 when healthy. Lets other services use
+  `depends_on` with `condition: service_healthy`.
+
 ## [0.1.0] - 2026-11-06
 
 ### Added
