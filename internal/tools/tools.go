@@ -25,6 +25,8 @@ type Source interface {
 	Search(ctx context.Context, query string, f frigate.Filter) ([]frigate.Event, error)
 	EventSnapshot(ctx context.Context, id string, height int, crop bool) ([]byte, error)
 	RecordingFrame(ctx context.Context, camera string, t float64, height int) ([]byte, error)
+	LiveFrame(ctx context.Context, camera string, height int) ([]byte, error)
+	SubLabels(ctx context.Context) ([]string, error)
 	Stats(ctx context.Context) (*frigate.Stats, error)
 }
 
@@ -145,6 +147,20 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 		Description: "Show the saved snapshot (JPEG) of one tracked object from get_events or search_events, with its box drawn.",
 		Annotations: readOnly("Event snapshot"),
 	}, t.eventSnapshot)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_camera_frame",
+		Description: "Show what a camera sees right now, or saw at a past time (from the recordings). With compare, two " +
+			"times side by side in one picture, e.g. to check whether a package is still there: at the time it was " +
+			"delivered, compared with now. Use for \"is the car still in the driveway?\" or \"what did the porch look like at 3pm?\".",
+		Annotations: readOnly("Camera frame"),
+	}, t.cameraFrame)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "last_seen",
+		Description: "When an object (car, person, dog, ...) or a recognized person or plate was last seen, in one line, " +
+			"with how long ago. Optionally on one camera or in one zone. Use for \"when was the last car in the driveway?\" " +
+			"or \"when did Alex last come home?\".",
+		Annotations: readOnly("Last seen"),
+	}, t.lastSeen)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_system_status",

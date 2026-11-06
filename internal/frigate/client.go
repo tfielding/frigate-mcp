@@ -201,12 +201,13 @@ type StorageStats struct {
 
 // Filter narrows a review or event query. Empty fields mean "all".
 type Filter struct {
-	Cameras []string
-	Labels  []string
-	Zones   []string
-	After   time.Time
-	Before  time.Time
-	Limit   int
+	Cameras   []string
+	Labels    []string
+	SubLabels []string // recognized names (faces, plates)
+	Zones     []string
+	After     time.Time
+	Before    time.Time
+	Limit     int
 }
 
 func (f Filter) values() url.Values {
@@ -216,6 +217,9 @@ func (f Filter) values() url.Values {
 	}
 	if len(f.Labels) > 0 {
 		q.Set("labels", strings.Join(f.Labels, ","))
+	}
+	if len(f.SubLabels) > 0 {
+		q.Set("sub_labels", strings.Join(f.SubLabels, ","))
 	}
 	if len(f.Zones) > 0 {
 		q.Set("zones", strings.Join(f.Zones, ","))
@@ -311,6 +315,25 @@ func (c *Client) EventSnapshot(ctx context.Context, id string, height int, crop 
 		q.Set("crop", "1")
 	}
 	return c.image(ctx, "/api/events/"+url.PathEscape(id)+"/snapshot.jpg", q)
+}
+
+// LiveFrame returns a camera's current frame as JPEG. If the camera is offline, Frigate sends an
+// older frame or a placeholder instead, without saying so: check the camera's stats.
+func (c *Client) LiveFrame(ctx context.Context, camera string, height int) ([]byte, error) {
+	q := url.Values{}
+	if height > 0 {
+		q.Set("height", strconv.Itoa(height))
+	}
+	return c.image(ctx, "/api/"+url.PathEscape(camera)+"/latest.jpg", q)
+}
+
+// SubLabels returns the recognized names Frigate knows (faces, plates and the like).
+func (c *Client) SubLabels(ctx context.Context) ([]string, error) {
+	var out []string
+	if err := c.getJSON(ctx, "/api/sub_labels", nil, 1<<20, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // RecordingFrame returns the recorded frame of a camera at t as JPEG (requires recordings).

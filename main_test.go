@@ -124,10 +124,26 @@ func (f *fakeFrigate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/review/"):
 		http.Error(w, `{"message":"Review not found"}`, http.StatusNotFound)
 	case p == "/api/events" || p == "/api/events/search":
-		w.Write(mustJSON([]map[string]any{
+		evs := []map[string]any{
 			event("e-car", "driveway", "car", ts(1), ts(0.9), []string{"driveway"}, true, "ABC123"),
 			event("e-person", "front_door", "person", ts(3), 0, []string{"porch"}, false, ""),
-		}))
+		}
+		// Like Frigate, only the asked-for labels.
+		if labels := r.URL.Query().Get("labels"); labels != "" {
+			var keep []map[string]any
+			for _, e := range evs {
+				if strings.Contains(","+labels+",", ","+e["label"].(string)+",") {
+					keep = append(keep, e)
+				}
+			}
+			evs = keep
+		}
+		w.Write(mustJSON(evs))
+	case p == "/api/sub_labels":
+		w.Write([]byte(`["Alex", "ABC123"]`))
+	case strings.HasSuffix(p, "/latest.jpg") && (p == "/api/front_door/latest.jpg" || p == "/api/driveway/latest.jpg"):
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write(fakeJPEG)
 	case p == "/api/events/e-car":
 		w.Write(mustJSON(event("e-car", "driveway", "car", ts(1), ts(0.9), []string{"driveway"}, true, "ABC123")))
 	case p == "/api/events/e-person":
@@ -290,7 +306,7 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) map[string]bool {
 func TestToolsAreListedReadOnly(t *testing.T) {
 	names := toolNames(t, start(t, config{}, nil))
 	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "get_events", "get_events_grid", "get_event_snapshot",
-		"get_system_status"}
+		"get_system_status", "get_camera_frame", "last_seen"}
 	for _, n := range want {
 		if !names[n] {
 			t.Errorf("missing %s", n)
@@ -729,16 +745,21 @@ func TestListEvents(t *testing.T) {
 	res := call(t, cs, "get_events", map[string]any{"label": "cars", "zone": "Driveway", "since": "today"})
 	got := text(res)
 	if res.IsError || !strings.Contains(got, "Tracked car objects, today, zone driveway. Times are UTC.") ||
+		!strings.Contains(got, "1 found, newest first:\n") ||
 		!strings.Contains(got, "- today 14:00 (6m00s), driveway: car 86%; zones: driveway; plate: ABC123; id e-car") ||
-		!strings.Contains(got, "front_door: person 86%; zones: porch; no snapshot; id e-person") {
+		strings.Contains(got, "e-person") {
 		t.Fatalf("got:\n%s", got)
 	}
-	q := fake.requests[len(fake.requests)-1]
+	q := lastRequest(fake, "/api/events?")
 	for _, want := range []string{"labels=car", "zones=driveway", "include_thumbnails=0", "limit=10",
 		"after=" + strconv.FormatFloat(ts(15), 'f', 3, 64)} {
 		if !strings.Contains(q, want) {
 			t.Errorf("events query %s lacks %s", q, want)
 		}
+	}
+	// An object without a snapshot says so.
+	if got := text(call(t, cs, "get_events", map[string]any{"label": "person"})); !strings.Contains(got, "front_door: person 86%; zones: porch; no snapshot; id e-person") {
+		t.Fatalf("person:\n%s", got)
 	}
 	res = call(t, cs, "get_events", map[string]any{"label": "unicorn"})
 	if !res.IsError || !strings.Contains(text(res), "tracked labels: car, dog, person, speech") {
@@ -906,5 +927,128 @@ func TestLoadConfig(t *testing.T) {
 	t.Setenv("SNAPSHOT_HEIGHT", "-1")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("negative SNAPSHOT_HEIGHT accepted")
+	}
+}
+
+// lastRequest is the last API request the fake Frigate got whose path starts with prefix.
+func lastRequest(fake *fakeFrigate, prefix string) string {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	for i := len(fake.requests) - 1; i >= 0; i-- {
+		if strings.HasPrefix(fake.requests[i], prefix) {
+			return fake.requests[i]
+		}
+	}
+	return ""
+}
+
+func TestCameraFrame(t *testing.T) {
+	fake := &fakeFrigate{}
+	cs := start(t, config{}, fake)
+
+	// Now: the live frame.
+	res := call(t, cs, "get_camera_frame", map[string]any{"camera": "Front Door"})
+	if res.IsError || imageOf(res) == nil || text(res) != "front_door now (today 15:00)" {
+		t.Fatalf("now: %s", text(res))
+	}
+	if q := lastRequest(fake, "/api/front_door/latest.jpg"); q != "/api/front_door/latest.jpg?height=720" {
+		t.Errorf("live request: %q", q)
+	}
+	// A camera that's offline says so: its "latest" may be an old picture.
+	res = call(t, cs, "get_camera_frame", map[string]any{"camera": "driveway", "at": "now"})
+	if res.IsError || !strings.Contains(text(res), "driveway seems to be offline") {
+		t.Fatalf("offline: %s", text(res))
+	}
+
+	// A past time: from the recordings.
+	res = call(t, cs, "get_camera_frame", map[string]any{"camera": "front_door", "at": "11:30"})
+	if res.IsError || imageOf(res) == nil || text(res) != "front_door at today 11:30" {
+		t.Fatalf("past: %s", text(res))
+	}
+	want := "/api/front_door/recordings/" + strconv.FormatFloat(ts(3.5), 'f', 3, 64) + "/snapshot.jpg?height=720"
+	if q := lastRequest(fake, "/api/front_door/recordings/"); q != want {
+		t.Errorf("recording request %q, want %q", q, want)
+	}
+
+	// Then and now, side by side in one picture.
+	res = call(t, cs, "get_camera_frame", map[string]any{"camera": "front_door", "at": "10:00", "compare": "now"})
+	got := text(res)
+	if res.IsError || !strings.Contains(got, "front_door, side by side (left to right):\n1. at today 10:00\n2. now (today 15:00)\n") {
+		t.Fatalf("compare: %s", got)
+	}
+	if b := decodeJPEG(t, imageOf(res)).Bounds(); b.Dx() != 1280 || b.Dy() != 358 {
+		t.Errorf("compare size %v", b)
+	}
+
+	for args, want := range map[string]map[string]any{
+		"is in the future":               {"camera": "front_door", "at": "today 18:00"},
+		`at "lunchtime" not understood`:  {"camera": "front_door", "at": "lunchtime"},
+		`unknown camera "attic"`:         {"camera": "attic"},
+		`missing properties: ["camera"]`: {},
+		"camera is required":             {"camera": " "},
+	} {
+		res := call(t, cs, "get_camera_frame", want)
+		if !res.IsError || !strings.Contains(text(res), args) {
+			t.Errorf("%v: got %s", want, text(res))
+		}
+	}
+
+	// No recording at that time.
+	cs = start(t, config{}, &fakeFrigate{noRecs: true})
+	res = call(t, cs, "get_camera_frame", map[string]any{"camera": "front_door", "at": "03:00"})
+	if !res.IsError || !strings.Contains(text(res), "no recording of front_door at today 03:00") {
+		t.Fatalf("no recording: %s", text(res))
+	}
+	// One side missing: the other is still shown.
+	res = call(t, cs, "get_camera_frame", map[string]any{"camera": "front_door", "at": "03:00", "compare": "now"})
+	if res.IsError || imageOf(res) == nil || !strings.Contains(text(res), "1. at today 03:00: no picture: no recording") {
+		t.Fatalf("half missing: %s", text(res))
+	}
+}
+
+func TestLastSeen(t *testing.T) {
+	fake := &fakeFrigate{}
+	cs := start(t, config{}, fake)
+	res := call(t, cs, "last_seen", map[string]any{"label": "cars"})
+	if got := text(res); res.IsError || got != "Last car: today 14:00 on driveway (1 hour ago), for 6m00s. Zones: driveway. Plate ABC123. Id e-car.\n"+
+		"Use get_event_snapshot with the id to see it.\n" {
+		t.Fatalf("got %q", got)
+	}
+	q := lastRequest(fake, "/api/events?")
+	for _, want := range []string{"labels=car", "limit=1", "after=" + strconv.FormatFloat(ts(31*24), 'f', 3, 64)} {
+		if !strings.Contains(q, want) {
+			t.Errorf("query %s lacks %s", q, want)
+		}
+	}
+
+	// Still there.
+	res = call(t, cs, "last_seen", map[string]any{"label": "person", "camera": "front_door"})
+	if got := text(res); got != "Person on front_door is there now, since today 12:00 (3 hours ago). Zones: porch. Id e-person.\n" {
+		t.Fatalf("ongoing: %q", got)
+	}
+	// Without a camera in the question, the answer names it.
+	res = call(t, cs, "last_seen", map[string]any{"label": "person"})
+	if got := text(res); !strings.HasPrefix(got, "Person is there now on front_door, since today 12:00") {
+		t.Fatalf("ongoing, any camera: %q", got)
+	}
+
+	// A recognized name, matched loosely; an unknown one lists the known names.
+	call(t, cs, "last_seen", map[string]any{"name": "alex", "within": "1w"})
+	if q := lastRequest(fake, "/api/events?"); !strings.Contains(q, "sub_labels=Alex") || !strings.Contains(q, "after="+strconv.FormatFloat(ts(7*24), 'f', 3, 64)) {
+		t.Errorf("name query: %s", q)
+	}
+	res = call(t, cs, "last_seen", map[string]any{"name": "Sasha"})
+	if !res.IsError || !strings.Contains(text(res), `unknown name "Sasha"; names Frigate has recognized: Alex, ABC123`) {
+		t.Fatalf("unknown name: %s", text(res))
+	}
+
+	// Never seen.
+	res = call(t, cs, "last_seen", map[string]any{"label": "dog", "zone": "driveway"})
+	if got := text(res); got != "No dog seen in zone driveway in the last 31 days.\n" {
+		t.Fatalf("none: %q", got)
+	}
+	res = call(t, cs, "last_seen", nil)
+	if !res.IsError || !strings.Contains(text(res), "give a label") {
+		t.Fatalf("no args: %s", text(res))
 	}
 }

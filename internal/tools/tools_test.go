@@ -416,3 +416,14 @@ func TestTimeRange(t *testing.T) {
 		}
 	}
 }
+
+func TestAgo(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		10 * time.Second: "just now", 5 * time.Minute: "5 minutes ago", time.Minute: "1 minute ago",
+		3 * time.Hour: "3 hours ago", 47 * time.Hour: "47 hours ago", 72 * time.Hour: "3 days ago",
+	} {
+		if got := ago(d); got != want {
+			t.Errorf("ago(%v) = %q, want %q", d, got, want)
+		}
+	}
+}

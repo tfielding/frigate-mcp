@@ -19,6 +19,11 @@ All notable changes to this project are documented here. The format follows
   timestamp).
 - Grid tiles zoom in on objects that are small in the frame, so distant people and cars are
   recognizable (`GRID_CROP`: `auto` by default, `always` or `off`).
+- `get_camera_frame`: a camera now, or at a past time from the recordings, or two times side by
+  side (`compare`), e.g. "has the package been taken?". Says when a camera seems offline, since
+  Frigate's latest picture is then an older one.
+- `last_seen`: when an object, or a recognized person or plate (`name`), was last seen, in one line
+  with how long ago.
 - `get_system_status`: cameras that are offline, poorly connected or skipping frames, detector speed,
   free disk space and the Frigate version (with any newer release), from `/api/stats`. Works with
   the viewer role.

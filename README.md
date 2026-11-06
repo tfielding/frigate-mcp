@@ -27,6 +27,8 @@ Tested against Frigate 0.18.
 | `search_events` | `query`, optional `camera`, `since`, `from`, `to`, `limit` | Best matches by appearance. **Only offered while semantic search is enabled in Frigate** |
 | `search_events_grid` | same as `search_events`, `limit` default 6, at most 9 | One numbered grid of the best matches' snapshots with boxes (JPEG), plus the list. **Only with semantic search, like `search_events`** |
 | `get_system_status` | none | Whether Frigate and the cameras are working: offline or poorly connected cameras, detector speed, free disk space, Frigate version |
+| `get_camera_frame` | `camera`, optional `at` (default now), optional `compare` | What the camera sees now or saw at a past time (JPEG); with `compare`, two times side by side in one picture |
+| `last_seen` | `label` and/or `name`, optional `camera`, `zone`, `within` | When that object or recognized person/plate was last seen, in one line |
 
 `since` takes `30m`, `6h`, `2d`, `1w`, `today` or `yesterday` (default 24 hours, at most 31 days).
 For a time of day, `from` and `to` take times the way people say them: `11:30`, `2pm`, `noon`,
@@ -86,6 +88,23 @@ Tiles zoom in on an object that's small in the frame (its larger side under 40% 
 at the end of the driveway is recognizable instead of a few pixels; a close object keeps the whole
 scene around it. Frigate does the cropping (`crop=1` on the snapshot). `GRID_CROP=always` zooms in on
 every object, `off` never does. Recorded frames and the single-picture tools are never cropped.
+
+`get_camera_frame` answers "is the car still in the driveway?" (now) and "what did the porch look
+like at 3pm?" (from the recordings), and with `compare` shows two times side by side: "has the
+package been taken?" is `at: 10:15, compare: now`. Times take the same forms as `from`/`to`. A past
+time needs a recording then; Frigate may only keep recordings around events, and says so. If a
+camera is offline right now, Frigate's "latest" picture is an older frame or a placeholder, so the
+answer says the camera seems offline.
+
+`last_seen` answers "when was the last car in the driveway?" in one line, with how long ago and for
+how long (or that it's there now), plus the id for `get_event_snapshot`:
+
+```
+Last car on driveway: today 14:00 (1 hour ago), for 6m00s. Zones: driveway. Id 1762270000.1-abc.
+```
+
+`name` looks for a recognized face or plate (Frigate's face or license plate recognition), matched
+loosely against the names Frigate knows; it searches the last 31 days unless `within` says less.
 
 If [GenAI review descriptions](https://docs.frigate.video/configuration/genai/genai_review) are configured in
 Frigate, each item also gets Frigate's own title, summary and threat level. Without them, the list
