@@ -21,6 +21,7 @@ Tested against Frigate 0.18.
 | `get_alerts` | optional `severity` (`alert` default, `detection`, `all`), `camera`, `since`, `from`, `to`, `limit` | Counts of alerts and detections, then a list, newest first |
 | `get_alerts_grid` | optional `severity`, `camera`, `since`, `from`, `to`, `limit` (default 6, at most 9) | One numbered grid picture of the newest items (JPEG), plus the same list as `get_alerts` with matching numbers |
 | `get_alert_snapshot` | `id` from `get_alerts` | The picture for that item (JPEG) |
+| `get_alert_clip` | `id` from `get_alerts` | A short animated clip of that item (GIF), from a few seconds before to a few seconds after |
 | `get_events` | optional `camera`, `label`, `zone`, `since`, `from`, `to`, `limit` | Tracked objects, newest first |
 | `get_events_grid` | same as `get_events`, `limit` default 6, at most 9 | One numbered grid of the objects' snapshots with boxes (JPEG), plus the same list as `get_events` |
 | `get_event_snapshot` | `id` from `get_events` / `search_events` | The object's saved snapshot with its box drawn (JPEG) |
@@ -57,6 +58,12 @@ Use get_alert_snapshot with an id to show the picture.
 
 `get_alert_snapshot` returns the recorded frame Frigate uses as the item's thumbnail; if recordings
 are off it falls back to the snapshot of an object in it.
+
+`get_alert_clip` returns Frigate's preview of the item as an animated GIF, from 8 seconds before it
+started to 8 seconds after it ended, so you see what happened rather than one moment. It's made from
+Frigate's low-resolution preview recordings, so it's small; if they don't cover the item, the answer
+says so. Vision models only look at still pictures, so the clip is for you (MCP clients that
+forward images, like signal-ollama, send it as an attachment).
 
 `get_alerts_grid` puts those pictures for several items into one image, each tile labelled with its
 number, time and what was seen (e.g. `3) 14:12 (person, car)`), and the camera name too with

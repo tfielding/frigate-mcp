@@ -22,6 +22,8 @@ All notable changes to this project are documented here. The format follows
 - `get_camera_frame`: a camera now, or at a past time from the recordings, or two times side by
   side (`compare`), e.g. "has the package been taken?". Says when a camera seems offline, since
   Frigate's latest picture is then an older one.
+- `get_alert_clip`: Frigate's animated preview (GIF) of an alert or detection, from a few seconds
+  before to a few seconds after.
 - `last_seen`: when an object, or a recognized person or plate (`name`), was last seen, in one line
   with how long ago.
 - `get_system_status`: cameras that are offline, poorly connected or skipping frames, detector speed,

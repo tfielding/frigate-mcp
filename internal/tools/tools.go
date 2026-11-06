@@ -26,6 +26,7 @@ type Source interface {
 	EventSnapshot(ctx context.Context, id string, height int, crop bool) ([]byte, error)
 	RecordingFrame(ctx context.Context, camera string, t float64, height int) ([]byte, error)
 	LiveFrame(ctx context.Context, camera string, height int) ([]byte, error)
+	ReviewPreview(ctx context.Context, id string) ([]byte, error)
 	SubLabels(ctx context.Context) ([]string, error)
 	Stats(ctx context.Context) (*frigate.Stats, error)
 }
@@ -127,6 +128,13 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 			"For several alerts at once, use get_alerts_grid.",
 		Annotations: readOnly("Alert snapshot"),
 	}, t.alertSnapshot)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_alert_clip",
+		Description: "Show a short animated clip (GIF) of one alert or detection, by its id from get_alerts or " +
+			"get_alerts_grid: from a few seconds before to a few seconds after, so you can see what happened, not just " +
+			"one moment. Use when the user asks to see what happened or wants more than a picture.",
+		Annotations: readOnly("Alert clip"),
+	}, t.alertClip)
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_events",
 		Description: "Text only, no pictures. List individual objects Frigate tracked (person, car, dog, ...), newest first, " +
@@ -374,6 +382,46 @@ func (t *Toolset) alertSnapshot(ctx context.Context, _ *mcp.CallToolRequest, in 
 	what := strings.Join(dedupe(r.Data.Objects), ", ")
 	slog.Info("get_alert_snapshot", "id", id, "camera", r.Camera, "bytes", len(jpeg))
 	return imageResult(fmt.Sprintf("%s on %s at %s: %s", capitalize(r.Severity), r.Camera, clock(r.Start.Time, now), what), jpeg), nil, nil
+}
+
+func (t *Toolset) alertClip(ctx context.Context, _ *mcp.CallToolRequest, in IDInput) (*mcp.CallToolResult, any, error) {
+	id := strings.TrimSpace(in.ID)
+	if id == "" {
+		return nil, nil, errors.New("id is required; get it from get_alerts")
+	}
+	cat, err := t.cat.get(ctx)
+	if err != nil {
+		return nil, nil, unavailable(err)
+	}
+	r, err := t.src.Review(ctx, id)
+	if errors.Is(err, frigate.ErrNotFound) || (err == nil && !cat.visible(r.Camera)) {
+		return nil, nil, fmt.Errorf("no alert or detection with id %q; get ids from get_alerts", id)
+	}
+	if err != nil {
+		slog.Error("get_alert_clip", "id", id, "err", err)
+		return nil, nil, unavailable(err)
+	}
+	gif, err := t.src.ReviewPreview(ctx, id)
+	if errors.Is(err, frigate.ErrNotFound) {
+		return nil, nil, fmt.Errorf("no clip available for %s; Frigate's preview recordings for camera %s may not cover it "+
+			"(try get_alert_snapshot for a picture)", id, r.Camera)
+	}
+	if err != nil {
+		slog.Error("get_alert_clip", "id", id, "err", err)
+		return nil, nil, unavailable(err)
+	}
+	now := t.opt.Now().In(t.opt.Location)
+	what := strings.Join(dedupe(r.Data.Objects), ", ")
+	if what == "" {
+		what = "activity"
+	}
+	slog.Info("get_alert_clip", "id", id, "camera", r.Camera, "bytes", len(gif))
+	caption := fmt.Sprintf("Clip of the %s on %s at %s (%s), from a few seconds before to a few seconds after.",
+		r.Severity, r.Camera, clock(r.Start.Time, now), what)
+	return &mcp.CallToolResult{Content: []mcp.Content{
+		&mcp.TextContent{Text: caption},
+		&mcp.ImageContent{Data: gif, MIMEType: "image/gif"},
+	}}, nil, nil
 }
 
 // maxSnapshotTries bounds how many of a review item's objects are tried for a snapshot, so an item

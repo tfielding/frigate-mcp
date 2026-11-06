@@ -361,6 +361,20 @@ func (c *Client) Ping(ctx context.Context) error {
 	return err
 }
 
+// ReviewPreview returns an animated GIF of a review item, from a few seconds before it starts to a
+// few seconds after it ends, made from Frigate's low-resolution preview recordings.
+func (c *Client) ReviewPreview(ctx context.Context, id string) ([]byte, error) {
+	path := "/api/review/" + url.PathEscape(id) + "/preview"
+	body, ctype, err := c.do(ctx, path, url.Values{"format": {"gif"}}, maxImageBytes)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(ctype, "image/gif") || !bytes.HasPrefix(body, []byte("GIF8")) {
+		return nil, fmt.Errorf("frigate %s: returned %q instead of a GIF", path, ctype)
+	}
+	return body, nil
+}
+
 func (c *Client) image(ctx context.Context, path string, q url.Values) ([]byte, error) {
 	body, ctype, err := c.do(ctx, path, q, maxImageBytes)
 	if err != nil {

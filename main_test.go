@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
@@ -24,8 +25,25 @@ import (
 
 var (
 	fakeJPEG = solidJPEG(160, 90, color.RGBA{0, 0, 255, 255})
+	fakeGIF  = twoFrameGIF()
 	now      = time.Date(2026, 11, 1, 15, 0, 0, 0, time.UTC)
 )
+
+// twoFrameGIF is a tiny animated GIF, like Frigate's review preview.
+func twoFrameGIF() []byte {
+	pal := color.Palette{color.Black, color.White}
+	anim := &gif.GIF{}
+	for i := range 2 {
+		frame := image.NewPaletted(image.Rect(0, 0, 32, 18), pal)
+		frame.SetColorIndex(i*10, 5, 1)
+		anim.Image, anim.Delay = append(anim.Image, frame), append(anim.Delay, 12)
+	}
+	var b bytes.Buffer
+	if err := gif.EncodeAll(&b, anim); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
+}
 
 func solidJPEG(w, h int, c color.Color) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
@@ -117,6 +135,9 @@ func (f *fakeFrigate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				map[string]any{"title": "Courier drops off a package", "shortSummary": "A courier walks up to the porch, leaves a box and returns to a van.", "potential_threat_level": 0}),
 			review("r-hidden", "bedroom", "alert", ts(2), ts(1.9), []string{"person"}, nil, nil, "e-nosnap"),
 		})))
+	case p == "/api/review/r-alert1/preview" && r.URL.Query().Get("format") == "gif":
+		w.Header().Set("Content-Type", "image/gif")
+		w.Write(fakeGIF)
 	case p == "/api/review/r-alert1":
 		w.Write(mustJSON(review("r-alert1", "driveway", "alert", ts(12.75), ts(12.74), []string{"person"}, []string{"driveway"}, nil)))
 	case p == "/api/review/r-hidden":
@@ -306,7 +327,7 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) map[string]bool {
 func TestToolsAreListedReadOnly(t *testing.T) {
 	names := toolNames(t, start(t, config{}, nil))
 	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "get_events", "get_events_grid", "get_event_snapshot",
-		"get_system_status", "get_camera_frame", "last_seen"}
+		"get_system_status", "get_camera_frame", "last_seen", "get_alert_clip"}
 	for _, n := range want {
 		if !names[n] {
 			t.Errorf("missing %s", n)
@@ -1050,5 +1071,48 @@ func TestLastSeen(t *testing.T) {
 	res = call(t, cs, "last_seen", nil)
 	if !res.IsError || !strings.Contains(text(res), "give a label") {
 		t.Fatalf("no args: %s", text(res))
+	}
+}
+
+func TestAlertClip(t *testing.T) {
+	fake := &fakeFrigate{}
+	cs := start(t, config{}, fake)
+	res := call(t, cs, "get_alert_clip", map[string]any{"id": "r-alert1"})
+	if res.IsError {
+		t.Fatalf("got %s", text(res))
+	}
+	if got := text(res); got != "Clip of the alert on driveway at today 02:15 (person), from a few seconds before to a few seconds after." {
+		t.Errorf("caption: %q", got)
+	}
+	var clip *mcp.ImageContent
+	for _, c := range res.Content {
+		if ic, ok := c.(*mcp.ImageContent); ok {
+			clip = ic
+		}
+	}
+	if clip == nil || clip.MIMEType != "image/gif" || !bytes.Equal(clip.Data, fakeGIF) {
+		t.Fatalf("clip: %+v", clip)
+	}
+	if anim, err := gif.DecodeAll(bytes.NewReader(clip.Data)); err != nil || len(anim.Image) != 2 {
+		t.Fatalf("not an animated GIF: %v", err)
+	}
+	if q := lastRequest(fake, "/api/review/r-alert1/preview"); q != "/api/review/r-alert1/preview?format=gif" {
+		t.Errorf("request: %q", q)
+	}
+
+	// An alert without a preview, an unknown id, and a hidden camera's alert.
+	for _, tc := range []struct {
+		cfg  config
+		id   string
+		want string
+	}{
+		{config{}, "r-hidden", "no clip available for r-hidden; Frigate's preview recordings for camera bedroom may not cover it"},
+		{config{}, "nope", `no alert or detection with id "nope"`},
+		{config{opt: tools.Options{Allowed: map[string]bool{"driveway": true}}}, "r-hidden", `no alert or detection with id "r-hidden"`},
+	} {
+		res := call(t, start(t, tc.cfg, nil), "get_alert_clip", map[string]any{"id": tc.id})
+		if !res.IsError || !strings.Contains(text(res), tc.want) {
+			t.Errorf("%s: got %s", tc.id, text(res))
+		}
 	}
 }
