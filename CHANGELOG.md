@@ -17,6 +17,8 @@ All notable changes to this project are documented here. The format follows
   recorded frames (`GRID_BOXES=false` for recorded frames first).
 - `GRID_LABEL_POSITION`: which corner grid tile labels go in (default bottom-left, clear of Frigate's
   timestamp).
+- Grid tiles zoom in on objects that are small in the frame, so distant people and cars are
+  recognizable (`GRID_CROP`: `auto` by default, `always` or `off`).
 - `get_system_status`: cameras that are offline, poorly connected or skipping frames, detector speed,
   free disk space and the Frigate version (with any newer release), from `/api/stats`. Works with
   the viewer role.

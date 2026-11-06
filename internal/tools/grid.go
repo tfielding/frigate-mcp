@@ -66,6 +66,38 @@ func ParseCorner(s string) (Corner, error) {
 	return "", fmt.Errorf("label position %q not understood; use top-left, top-right, bottom-left or bottom-right", s)
 }
 
+// Crop is when a grid tile zooms in on its object instead of showing the whole frame.
+type Crop string
+
+const (
+	CropAuto   Crop = "auto"   // when the object is small in the frame
+	CropAlways Crop = "always" // always
+	CropOff    Crop = "off"    // never
+)
+
+// smallObject: an object whose larger side is under this share of the frame is zoomed in on in
+// auto mode. Below it, a person at the end of the driveway is a few pixels in a tile.
+const smallObject = 0.4
+
+// ParseCrop reads auto, always or off (also true/false). Empty means auto.
+func ParseCrop(s string) (Crop, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto":
+		return CropAuto, nil
+	case "always", "on", "true", "yes":
+		return CropAlways, nil
+	case "off", "never", "false", "no":
+		return CropOff, nil
+	}
+	return "", fmt.Errorf("%q not understood; use auto, always or off", s)
+}
+
+// small reports whether an object's box (x, y, width, height as fractions of the frame) is small
+// enough to zoom in on. Without a box, it isn't.
+func small(box []float64) bool {
+	return len(box) == 4 && box[2] > 0 && box[3] > 0 && max(box[2], box[3]) < smallObject
+}
+
 type GridInput struct {
 	Severity string `json:"severity,omitempty" jsonschema:"alert (default), detection, or all"`
 	Camera   string `json:"camera,omitempty" jsonschema:"only this camera; omit for all cameras"`
@@ -165,7 +197,7 @@ func (t *Toolset) alertsGrid(ctx context.Context, _ *mcp.CallToolRequest, in Gri
 			line:  strings.TrimPrefix(reviewLine(*r, sel.severity == "all", sel.now), "- "),
 			label: tileLabel(r.Start.Time, r.Camera, dedupe(r.Data.Objects), sel.now.Location(), t.opt.GridCamera),
 			fetch: func(ctx context.Context, height int) ([]byte, error) {
-				return t.reviewPicture(ctx, r, height, t.opt.GridBoxes)
+				return t.reviewPicture(ctx, r, height, t.opt.GridBoxes, t.opt.GridCrop)
 			},
 		}
 	}
@@ -190,7 +222,8 @@ func (t *Toolset) eventTiles(evs []frigate.Event, now time.Time) []tile {
 				if !e.HasSnapshot {
 					return nil, errors.New("no snapshot saved")
 				}
-				return t.src.EventSnapshot(ctx, e.ID, height)
+				zoom := t.opt.GridCrop == CropAlways || (t.opt.GridCrop == CropAuto && small(e.Data.Box))
+				return t.src.EventSnapshot(ctx, e.ID, height, zoom)
 			},
 		}
 	}

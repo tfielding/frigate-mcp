@@ -53,6 +53,7 @@ type fakeFrigate struct {
 	requests []string // path?query of API requests
 	semantic bool
 	noRecs   bool // recordings off: recording snapshots 404
+	farAway  bool // e-a1 (the object in every alert) is small in the frame
 }
 
 func (f *fakeFrigate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +132,12 @@ func (f *fakeFrigate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write(mustJSON(event("e-car", "driveway", "car", ts(1), ts(0.9), []string{"driveway"}, true, "ABC123")))
 	case p == "/api/events/e-person":
 		w.Write(mustJSON(event("e-person", "front_door", "person", ts(3), 0, []string{"porch"}, false, "")))
+	case p == "/api/events/e-a1":
+		e := event("e-a1", "driveway", "person", ts(12.75), ts(12.74), []string{"driveway"}, true, "")
+		if f.farAway {
+			e["data"].(map[string]any)["box"] = []float64{0.7, 0.3, 0.04, 0.12}
+		}
+		w.Write(mustJSON(e))
 	case strings.HasSuffix(p, "/snapshot.jpg") && (strings.HasPrefix(p, "/api/events/e-car/") || strings.HasPrefix(p, "/api/events/e-a1/")),
 		strings.Contains(p, "/recordings/") && !f.noRecs:
 		w.Header().Set("Content-Type", "image/jpeg")
@@ -167,10 +174,15 @@ func review(id, cam, sev string, start, end float64, objects, zones []string, me
 	return r
 }
 
+// event builds a tracked object. Cars are far away (small in the frame); everything else is close.
 func event(id, cam, label string, start, end float64, zones []string, snap bool, plate string) map[string]any {
+	box := []float64{0.2, 0.1, 0.5, 0.8}
+	if label == "car" {
+		box = []float64{0.6, 0.4, 0.1, 0.08}
+	}
 	e := map[string]any{"id": id, "camera": cam, "label": label, "sub_label": nil, "zones": zones,
 		"start_time": start, "end_time": nil, "has_snapshot": snap, "has_clip": true,
-		"data": map[string]any{"score": 0.81, "top_score": 0.86, "recognized_license_plate": plate}}
+		"data": map[string]any{"score": 0.81, "top_score": 0.86, "recognized_license_plate": plate, "box": box}}
 	if end > 0 {
 		e["end_time"] = end
 	}
@@ -548,7 +560,8 @@ func TestEventsGrid(t *testing.T) {
 			t.Errorf("events query %s", q)
 		}
 	}
-	if len(fetched) != 1 || fetched[0] != "/api/events/e-car/snapshot.jpg?bbox=1&height=358" {
+	// The car is far away (small in the frame), so its tile zooms in on it.
+	if len(fetched) != 1 || fetched[0] != "/api/events/e-car/snapshot.jpg?bbox=1&crop=1&height=358" {
 		t.Errorf("pictures fetched: %v", fetched)
 	}
 
@@ -637,6 +650,62 @@ Storage for recordings and snapshots and clips: 186.3 GB free of 3.6 TB (95% use
 	if got := text(call(t, cs, "get_system_status", nil)); !strings.Contains(got, "Camera: front_door is OK.\n") ||
 		strings.Contains(got, "driveway") || strings.Contains(got, "bedroom") {
 		t.Fatalf("got:\n%s", got)
+	}
+}
+
+// snapshotRequests lists the object snapshots asked of the fake Frigate.
+func snapshotRequests(fake *fakeFrigate) []string {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	var out []string
+	for _, q := range fake.requests {
+		if strings.HasPrefix(q, "/api/events/") && strings.Contains(q, "/snapshot.jpg") {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
+func TestGridCrop(t *testing.T) {
+	// Alerts grid, auto: the alert's object is small in the frame, so its snapshot is cropped.
+	fake := &fakeFrigate{farAway: true}
+	cs := start(t, config{opt: tools.Options{GridBoxes: true}}, fake)
+	call(t, cs, "get_alerts_grid", map[string]any{"camera": "driveway"})
+	n := 0
+	for _, q := range snapshotRequests(fake) {
+		if strings.HasPrefix(q, "/api/events/e-a1/") {
+			n++
+			if !strings.Contains(q, "crop=1") {
+				t.Errorf("far-away object not cropped: %s", q)
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no snapshot of the far-away object asked for")
+	}
+	// A close object (the default e-a1) isn't.
+	fake = &fakeFrigate{}
+	cs = start(t, config{opt: tools.Options{GridBoxes: true}}, fake)
+	call(t, cs, "get_alerts_grid", map[string]any{"camera": "driveway"})
+	for _, q := range snapshotRequests(fake) {
+		if strings.Contains(q, "crop=1") {
+			t.Errorf("close object cropped: %s", q)
+		}
+	}
+
+	// GRID_CROP=off never crops, always always does; single pictures are never cropped.
+	fake = &fakeFrigate{}
+	cs = start(t, config{opt: tools.Options{GridCrop: tools.CropOff}}, fake)
+	call(t, cs, "get_events_grid", nil)
+	if q := snapshotRequests(fake); len(q) != 1 || strings.Contains(q[0], "crop") {
+		t.Errorf("off: %v", q)
+	}
+	fake = &fakeFrigate{}
+	cs = start(t, config{opt: tools.Options{GridCrop: tools.CropAlways}}, fake)
+	call(t, cs, "get_events_grid", nil)
+	call(t, cs, "get_event_snapshot", map[string]any{"id": "e-car"})
+	if q := snapshotRequests(fake); len(q) != 2 || !strings.Contains(q[0], "crop=1") || strings.Contains(q[1], "crop") {
+		t.Errorf("always: %v", q)
 	}
 }
 
@@ -808,6 +877,18 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("GRID_LABEL_POSITION=middle: %v", err)
 	}
 	t.Setenv("GRID_LABEL_POSITION", "")
+	if c.opt.GridCrop != tools.CropAuto {
+		t.Fatalf("default crop: %q", c.opt.GridCrop)
+	}
+	t.Setenv("GRID_CROP", "Always")
+	if c, err = loadConfig(); err != nil || c.opt.GridCrop != tools.CropAlways {
+		t.Fatalf("GRID_CROP=Always: %q %v", c.opt.GridCrop, err)
+	}
+	t.Setenv("GRID_CROP", "sometimes")
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "GRID_CROP: \"sometimes\" not understood; use auto, always or off") {
+		t.Fatalf("GRID_CROP=sometimes: %v", err)
+	}
+	t.Setenv("GRID_CROP", "")
 	t.Setenv("GRID_BOXES", "false")
 	if c, err = loadConfig(); err != nil || c.opt.GridBoxes {
 		t.Fatalf("GRID_BOXES=false: %+v %v", c.opt, err)

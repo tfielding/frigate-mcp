@@ -119,10 +119,11 @@ type Event struct {
 }
 
 type EventData struct {
-	Score       float64 `json:"score"`
-	TopScore    float64 `json:"top_score"`
-	Description string  `json:"description"`
-	Plate       string  `json:"recognized_license_plate"`
+	Score       float64   `json:"score"`
+	TopScore    float64   `json:"top_score"`
+	Description string    `json:"description"`
+	Plate       string    `json:"recognized_license_plate"`
+	Box         []float64 `json:"box"` // the object in its snapshot: x, y, width, height as fractions of the frame
 }
 
 // SubLabel is a recognized face, plate owner, etc. Older Frigate versions sent [name, score].
@@ -300,10 +301,14 @@ func (c *Client) Search(ctx context.Context, query string, f Filter) ([]Event, e
 }
 
 // EventSnapshot returns the saved snapshot of a tracked object as JPEG, with its bounding box.
-func (c *Client) EventSnapshot(ctx context.Context, id string, height int) ([]byte, error) {
+// With crop, it's cut down to the area around the object.
+func (c *Client) EventSnapshot(ctx context.Context, id string, height int, crop bool) ([]byte, error) {
 	q := url.Values{"bbox": {"1"}}
 	if height > 0 {
 		q.Set("height", strconv.Itoa(height))
+	}
+	if crop {
+		q.Set("crop", "1")
 	}
 	return c.image(ctx, "/api/events/"+url.PathEscape(id)+"/snapshot.jpg", q)
 }

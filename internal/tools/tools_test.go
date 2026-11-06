@@ -193,6 +193,29 @@ func TestLabelCorners(t *testing.T) {
 	}
 }
 
+func TestSmallObject(t *testing.T) {
+	for _, tc := range []struct {
+		box  []float64
+		want bool
+	}{
+		{[]float64{0.7, 0.3, 0.04, 0.12}, true}, // a person at the end of the driveway
+		{[]float64{0.6, 0.4, 0.1, 0.08}, true},  // a car down the street
+		{[]float64{0.2, 0.1, 0.5, 0.8}, false},  // a person at the door
+		{[]float64{0.1, 0.5, 0.45, 0.2}, false}, // a wide car close by
+		{[]float64{0, 0, 0.39, 0.39}, true},     // just under 40%
+		{nil, false}, {[]float64{0.1, 0.1}, false}, {[]float64{0, 0, 0, 0}, false},
+	} {
+		if got := small(tc.box); got != tc.want {
+			t.Errorf("small(%v) = %v, want %v", tc.box, got, tc.want)
+		}
+	}
+	for in, want := range map[string]Crop{"": CropAuto, "AUTO": CropAuto, "always": CropAlways, "true": CropAlways, "off": CropOff, "no": CropOff} {
+		if got, err := ParseCrop(in); err != nil || got != want {
+			t.Errorf("ParseCrop(%q) = %q, %v", in, got, err)
+		}
+	}
+}
+
 func TestTileLabel(t *testing.T) {
 	objects := []string{"person", "car"}
 	for in, want := range map[time.Time]string{

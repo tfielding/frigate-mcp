@@ -82,6 +82,11 @@ cars today", "show me red trucks"), always using the objects' snapshots with box
 needs only regular object detection; objects without a saved snapshot get an empty tile. Pictures keep their shape, so portrait
 doorbells and panoramic cameras are letterboxed. An item with no picture gets an empty tile.
 
+Tiles zoom in on an object that's small in the frame (its larger side under 40% of it), so a person
+at the end of the driveway is recognizable instead of a few pixels; a close object keeps the whole
+scene around it. Frigate does the cropping (`crop=1` on the snapshot). `GRID_CROP=always` zooms in on
+every object, `off` never does. Recorded frames and the single-picture tools are never cropped.
+
 If [GenAI review descriptions](https://docs.frigate.video/configuration/genai/genai_review) are configured in
 Frigate, each item also gets Frigate's own title, summary and threat level. Without them, the list
 says what was detected but not what happened.
@@ -125,6 +130,7 @@ Use one of Frigate's two API ports:
 | `CAMERAS` | all | Comma-separated allowlist (case-insensitive) |
 | `SNAPSHOT_HEIGHT` | `720` | Image height in pixels; `0` = native. Also the height `get_alerts_grid` fits in |
 | `GRID_BOXES` | `true` | `get_alerts_grid` shows object snapshots with boxes; `false` for plain recorded frames |
+| `GRID_CROP` | `auto` | When grid tiles zoom in on the object: `auto` (when it's small in the frame), `always` or `off` |
 | `GRID_LABEL_POSITION` | `bottom-left` | Corner for grid tile labels: `top-left`, `top-right`, `bottom-left` or `bottom-right`. Pick one clear of Frigate's timestamp and your cameras' own on-screen text |
 | `GRID_CAMERA_LABELS` | `false` | Also write the camera name on `get_alerts_grid` tiles |
 | `TZ` | UTC | Time zone for times shown to the model, e.g. `America/New_York` |

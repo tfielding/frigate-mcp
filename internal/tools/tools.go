@@ -23,7 +23,7 @@ type Source interface {
 	Events(ctx context.Context, f frigate.Filter) ([]frigate.Event, error)
 	Event(ctx context.Context, id string) (*frigate.Event, error)
 	Search(ctx context.Context, query string, f frigate.Filter) ([]frigate.Event, error)
-	EventSnapshot(ctx context.Context, id string, height int) ([]byte, error)
+	EventSnapshot(ctx context.Context, id string, height int, crop bool) ([]byte, error)
 	RecordingFrame(ctx context.Context, camera string, t float64, height int) ([]byte, error)
 	Stats(ctx context.Context) (*frigate.Stats, error)
 }
@@ -34,6 +34,7 @@ type Options struct {
 	GridCamera      bool            // show the camera name on get_alerts_grid tiles
 	GridBoxes       bool            // get_alerts_grid prefers object snapshots with boxes over recorded frames
 	GridLabelCorner Corner          // where grid tile labels go; empty = bottom-left
+	GridCrop        Crop            // when grid tiles zoom in on the object; empty = auto
 	Location        *time.Location  // time zone for times shown to the model
 	Now             func() time.Time
 }
@@ -97,6 +98,9 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 	}
 	if opt.Now == nil {
 		opt.Now = time.Now
+	}
+	if opt.GridCrop == "" {
+		opt.GridCrop = CropAuto
 	}
 	t := &Toolset{src: src, opt: opt, server: s, refresh: configTTL,
 		cat: &catalogCache{src: src, allowed: opt.Allowed, ttl: configTTL}}
@@ -345,7 +349,7 @@ func (t *Toolset) alertSnapshot(ctx context.Context, _ *mcp.CallToolRequest, in 
 		slog.Error("get_alert_snapshot", "id", id, "err", err)
 		return nil, nil, unavailable(err)
 	}
-	jpeg, err := t.reviewPicture(ctx, r, t.opt.SnapshotHeight, false)
+	jpeg, err := t.reviewPicture(ctx, r, t.opt.SnapshotHeight, false, CropOff)
 	if err != nil {
 		slog.Warn("get_alert_snapshot: no image", "id", id, "err", err)
 		return nil, nil, fmt.Errorf("no picture available for %s; recordings and snapshots may be off for camera %s", id, r.Camera)
@@ -362,8 +366,9 @@ const maxSnapshotTries = 3
 
 // reviewPicture returns a picture of a review item: the recorded frame Frigate uses as its
 // thumbnail, or the snapshot of one of its objects (with its box drawn by Frigate). snapshotFirst
-// picks which is tried first; the other is the fallback.
-func (t *Toolset) reviewPicture(ctx context.Context, r *frigate.Review, height int, snapshotFirst bool) ([]byte, error) {
+// picks which is tried first; the other is the fallback. crop decides whether an object snapshot
+// zooms in on the object (a recorded frame can't be cropped).
+func (t *Toolset) reviewPicture(ctx context.Context, r *frigate.Review, height int, snapshotFirst bool, crop Crop) ([]byte, error) {
 	err := errors.New("no thumbnail time or objects")
 	frame := func() []byte {
 		if r.Data.ThumbTime <= 0 {
@@ -380,8 +385,15 @@ func (t *Toolset) reviewPicture(ctx context.Context, r *frigate.Review, height i
 			if i == maxSnapshotTries {
 				break
 			}
+			zoom := crop == CropAlways
+			if crop == CropAuto {
+				// The object's size is only in the event itself: one small request.
+				if e, err := t.src.Event(ctx, ev); err == nil {
+					zoom = small(e.Data.Box)
+				}
+			}
 			var jpeg []byte
-			if jpeg, err = t.src.EventSnapshot(ctx, ev, height); err == nil {
+			if jpeg, err = t.src.EventSnapshot(ctx, ev, height, zoom); err == nil {
 				return jpeg
 			}
 		}
@@ -543,7 +555,7 @@ func (t *Toolset) eventSnapshot(ctx context.Context, _ *mcp.CallToolRequest, in 
 	if !e.HasSnapshot {
 		return nil, nil, fmt.Errorf("no snapshot was saved for %s; snapshots may be off for camera %s", id, e.Camera)
 	}
-	jpeg, err := t.src.EventSnapshot(ctx, id, t.opt.SnapshotHeight)
+	jpeg, err := t.src.EventSnapshot(ctx, id, t.opt.SnapshotHeight, false)
 	if err != nil {
 		slog.Error("get_event_snapshot", "id", id, "err", err)
 		if errors.Is(err, frigate.ErrNotFound) {
