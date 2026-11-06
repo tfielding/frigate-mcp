@@ -173,7 +173,9 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_event_timeline",
 		Description: "What a tracked object did, step by step, as text: when it appeared, which zones it entered, when it " +
-			"stood still and for how long, and when it left. Takes an id from get_events, last_seen or get_alerts. Use " +
+			"stood still and for how long, and when it left. Starts with Frigate's top confidence for each object, whether it came into its zone " +
+			"from outside or appeared inside it, and whether it moved: low confidence, appearing inside a zone and never " +
+			"moving suggest a false detection. Takes an id from get_events, last_seen or get_alerts. Use " +
 			"for \"did they come to the door or just walk past?\" or \"how long was the car there?\".",
 		Annotations: readOnly("Event timeline"),
 	}, t.eventTimeline)

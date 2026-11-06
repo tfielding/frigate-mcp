@@ -10,6 +10,9 @@ All notable changes to this project are documented here. The format follows
 - `-healthcheck` flag for Docker's `healthcheck:`: checks the running server's `/healthz` from inside the
   container (the image has no shell or curl) and exits 0 when healthy. Lets other services use
   `depends_on` with `condition: service_healthy`.
+- `get_event_timeline` starts with a line of facts per object, to help tell real objects from false
+  detections: Frigate's top confidence, whether it came into its zone from outside or appeared inside
+  it, and whether it moved.
 
 ## [0.1.0] - 2026-11-06
 

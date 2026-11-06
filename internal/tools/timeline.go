@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -31,9 +32,11 @@ func (t *Toolset) eventTimeline(ctx context.Context, _ *mcp.CallToolRequest, in 
 	var ids []string
 	var camera, what string
 	var start time.Time
+	var single *frigate.Event // the object, when id is one
 	e, err := t.src.Event(ctx, id)
 	switch {
 	case err == nil:
+		single = e
 		ids, camera, what, start = []string{e.ID}, e.Camera, e.Label, e.Start.Time
 	case errors.Is(err, frigate.ErrNotFound):
 		r, rerr := t.src.Review(ctx, id)
@@ -69,15 +72,99 @@ func (t *Toolset) eventTimeline(ctx context.Context, _ *mcp.CallToolRequest, in 
 		return text(fmt.Sprintf("Frigate has no timeline for %s (%s on %s at %s); it may have been cleaned up already.\n",
 			id, what, camera, clock(start, now))), nil, nil
 	}
-	return text(describeTimeline(entries, camera, what, len(ids) > 1, now)), nil, nil
+	// Each object's top score: Frigate's best confidence over its whole life.
+	scores := map[string]float64{}
+	if single != nil {
+		scores[single.ID] = single.Data.TopScore
+	} else {
+		for _, oid := range ids {
+			if ev, err := t.src.Event(ctx, oid); err == nil {
+				scores[oid] = ev.Data.TopScore
+			}
+		}
+	}
+	return text(describeTimeline(entries, camera, what, len(ids) > 1, scores, now)), nil, nil
 }
+
+// objectFacts sums up one object from its timeline, for telling a real one from a false
+// detection: Frigate's top confidence, whether it appeared inside a zone or came in from
+// outside, and whether it moved.
+func objectFacts(entries []frigate.TimelineEntry, topScore float64) string {
+	var facts []string
+	if topScore > 0 {
+		facts = append(facts, fmt.Sprintf("Frigate's top confidence %.0f%%", topScore*100))
+	}
+	var seen, entered time.Time
+	var zones []string
+	var centers [][2]float64
+	for _, en := range entries {
+		switch en.ClassType {
+		case "visible":
+			if seen.IsZero() {
+				seen = en.Timestamp.Time
+			}
+		case "entered_zone":
+			if entered.IsZero() {
+				entered, zones = en.Timestamp.Time, dedupe(en.Data.Zones)
+			}
+		}
+		if b := en.Data.Box; len(b) == 4 {
+			centers = append(centers, [2]float64{b[0] + b[2]/2, b[1] + b[3]/2})
+		}
+	}
+	switch {
+	case entered.IsZero():
+		facts = append(facts, "never entered a zone")
+	case !seen.IsZero() && entered.Sub(seen) > time.Second:
+		facts = append(facts, fmt.Sprintf("first seen outside its zones, entered %s after %s",
+			strings.Join(zones, ", "), span(seen, &entered)))
+	default:
+		facts = append(facts, "appeared already inside "+strings.Join(zones, ", "))
+	}
+	if len(centers) >= 2 {
+		moved := 0.0
+		for _, c := range centers[1:] {
+			moved = max(moved, math.Hypot(c[0]-centers[0][0], c[1]-centers[0][1]))
+		}
+		if moved >= movedFar {
+			facts = append(facts, "moved across the frame")
+		} else {
+			facts = append(facts, "stayed in one place")
+		}
+	}
+	return strings.Join(facts, "; ")
+}
+
+// movedFar is how far an object's center must get from where it was first seen (as a fraction
+// of the frame) to count as having moved.
+const movedFar = 0.05
 
 // describeTimeline writes the entries as lines a person (and a small model) can follow. With
 // several objects, each line says which.
-func describeTimeline(entries []frigate.TimelineEntry, camera, what string, several bool, now time.Time) string {
+func describeTimeline(entries []frigate.TimelineEntry, camera, what string, several bool, scores map[string]float64, now time.Time) string {
 	first, last := entries[0].Timestamp.Time, entries[len(entries)-1].Timestamp.Time
 	var b strings.Builder
 	fmt.Fprintf(&b, "Timeline of %s on %s, %s (%s):\n", what, camera, clock(first, now), span(first, &last))
+	// One line of facts per object, in the order they appeared.
+	var order []string
+	byObject := map[string][]frigate.TimelineEntry{}
+	labels := map[string]string{}
+	for _, en := range entries {
+		if _, ok := byObject[en.SourceID]; !ok {
+			order = append(order, en.SourceID)
+		}
+		byObject[en.SourceID] = append(byObject[en.SourceID], en)
+		if labels[en.SourceID] == "" {
+			labels[en.SourceID] = en.Data.Label
+		}
+	}
+	for _, id := range order {
+		facts := objectFacts(byObject[id], scores[id])
+		if several {
+			facts = labels[id] + ": " + facts
+		}
+		b.WriteString(capitalize(facts) + ".\n")
+	}
 	stillSince := map[string]time.Time{}
 	for _, en := range entries {
 		at := en.Timestamp.In(now.Location()).Format("15:04:05")

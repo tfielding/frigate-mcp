@@ -30,7 +30,7 @@ Tested against Frigate 0.18.
 | `get_system_status` | none | Whether Frigate and the cameras are working: offline or poorly connected cameras, detector speed, free disk space, Frigate version |
 | `get_camera_frame` | `camera`, optional `at` (default now), optional `compare` | What the camera sees now or saw at a past time (JPEG); with `compare`, two times side by side in one picture |
 | `last_seen` | `label` and/or `name`, optional `camera`, `zone`, `within` | When that object or recognized person/plate was last seen, in one line |
-| `get_event_timeline` | `id` from `get_events`, `last_seen` or `get_alerts` | What the object did, step by step, as text: appeared, entered zones, stood still (how long), left |
+| `get_event_timeline` | `id` from `get_events`, `last_seen` or `get_alerts` | What the object did, step by step, as text: appeared, entered zones, stood still (how long), left; with its top confidence and whether it moved |
 
 `since` takes `30m`, `6h`, `2d`, `1w`, `today` or `yesterday` (default 24 hours, at most 31 days).
 For a time of day, `from` and `to` take times the way people say them: `11:30`, `2pm`, `noon`,
@@ -120,6 +120,7 @@ alert's id from `get_alerts` (its objects, up to 5):
 
 ```
 Timeline of person on front_door, today 14:12 (55s):
+Frigate's top confidence 86%; first seen outside its zones, entered porch after 5s; moved across the frame.
 - 14:12:03 person seen, near the left edge
 - 14:12:08 entered porch
 - 14:12:13 stopped moving
@@ -127,6 +128,12 @@ Timeline of person on front_door, today 14:12 (55s):
 - 14:12:53 moving again (still for 40s)
 - 14:12:58 gone, last seen near the right edge
 ```
+
+The first line sums up each object, to help tell a real one from a false detection: Frigate's top
+confidence (its best score over the object's whole life, so a person who scores low once they're
+close to a doorbell camera still shows the higher score from their approach), whether it came into
+its zone from outside or appeared already inside it, and whether it moved. A low score, appearing
+inside a zone and staying in one place together suggest a false detection.
 
 Frigate keeps the timeline only as long as the tracked object, so older ones may have none.
 

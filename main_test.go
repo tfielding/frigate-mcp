@@ -177,6 +177,12 @@ func (f *fakeFrigate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				entry("e-person", "front_door", "person", "active", t0+50, map[string]any{}),
 				entry("e-person", "front_door", "person", "gone", t0+55, map[string]any{"box": []float64{0.9, 0.4, 0.08, 0.3}}),
 			},
+			"e-ghost": {
+				entry("e-ghost", "front_door", "person", "visible", ts(2), map[string]any{"box": []float64{0.5, 0.5, 0.05, 0.1}}),
+				entry("e-ghost", "front_door", "person", "entered_zone", ts(2), map[string]any{"zones": []string{"porch"}}),
+				entry("e-ghost", "front_door", "person", "stationary", ts(2)+1, map[string]any{}),
+				entry("e-ghost", "front_door", "person", "gone", ts(2)+6, map[string]any{"box": []float64{0.51, 0.5, 0.05, 0.1}}),
+			},
 			"e-a1": {
 				entry("e-a1", "driveway", "person", "visible", ts(12.75), map[string]any{"box": []float64{0.4, 0.4, 0.1, 0.2}, "sub_label": []any{"Alex", 0.9}}),
 				entry("e-a1", "driveway", "person", "gone", ts(12.75)+8, map[string]any{"box": []float64{0.4, 0.05, 0.1, 0.1}}),
@@ -196,6 +202,10 @@ func (f *fakeFrigate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write(mustJSON(event("e-car", "driveway", "car", ts(1), ts(0.9), []string{"driveway"}, true, "ABC123")))
 	case p == "/api/events/e-person":
 		w.Write(mustJSON(event("e-person", "front_door", "person", ts(3), 0, []string{"porch"}, false, "")))
+	case p == "/api/events/e-ghost":
+		e := event("e-ghost", "front_door", "person", ts(2), ts(2)-6.0/3600, []string{"porch"}, true, "")
+		e["data"].(map[string]any)["top_score"] = 0.58
+		w.Write(mustJSON(e))
 	case p == "/api/events/e-a1":
 		e := event("e-a1", "driveway", "person", ts(12.75), ts(12.74), []string{"driveway"}, true, "")
 		if f.farAway {
@@ -1149,6 +1159,7 @@ func TestEventTimeline(t *testing.T) {
 	cs := start(t, config{}, fake)
 	res := call(t, cs, "get_event_timeline", map[string]any{"id": "e-person"})
 	want := "Timeline of person on front_door, today 12:00 (55s):\n" +
+		"Frigate's top confidence 86%; first seen outside its zones, entered porch after 5s; moved across the frame.\n" +
 		"- 12:00:00 person seen, near the left edge\n" +
 		"- 12:00:05 entered porch\n" +
 		"- 12:00:10 stopped moving\n" +
@@ -1165,6 +1176,7 @@ func TestEventTimeline(t *testing.T) {
 	// An alert: its objects' timelines.
 	res = call(t, cs, "get_event_timeline", map[string]any{"id": "r-alert1"})
 	if got := text(res); res.IsError || !strings.Contains(got, "Timeline of person on driveway, today 02:15 (8s):\n") ||
+		!strings.Contains(got, "\nFrigate's top confidence 86%; never entered a zone; moved across the frame.\n") ||
 		!strings.Contains(got, "- 02:15:00 person (Alex) seen, in the middle\n") ||
 		!strings.Contains(got, "- 02:15:08 gone, last seen near the top (far away)\n") {
 		t.Fatalf("alert: %s", got)
@@ -1218,5 +1230,14 @@ func TestHealthcheckFlag(t *testing.T) {
 		if got := localAddr(in); got != want {
 			t.Errorf("localAddr(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestEventTimelineFalseDetection(t *testing.T) {
+	// A "person" that appears inside the zone, scores low and never moves: the facts say so.
+	res := call(t, start(t, config{}, nil), "get_event_timeline", map[string]any{"id": "e-ghost"})
+	got := text(res)
+	if res.IsError || !strings.Contains(got, "\nFrigate's top confidence 58%; appeared already inside porch; stayed in one place.\n") {
+		t.Fatalf("got:\n%s", got)
 	}
 }
