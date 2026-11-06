@@ -160,6 +160,33 @@ func (f *fakeFrigate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			evs = keep
 		}
 		w.Write(mustJSON(evs))
+	case p == "/api/timeline":
+		// e-person walks to the porch, stands for 40s, shows a face and leaves; e-a1 passes by.
+		t0 := ts(3)
+		entry := func(id, cam, label, class string, at float64, data map[string]any) map[string]any {
+			data["label"] = label
+			return map[string]any{"timestamp": at, "camera": cam, "source": "tracked_object", "source_id": id,
+				"class_type": class, "data": data}
+		}
+		all := map[string][]map[string]any{
+			"e-person": {
+				entry("e-person", "front_door", "person", "visible", t0, map[string]any{"box": []float64{0.02, 0.4, 0.1, 0.3}}),
+				entry("e-person", "front_door", "person", "entered_zone", t0+5, map[string]any{"zones": []string{"porch"}}),
+				entry("e-person", "front_door", "person", "stationary", t0+10, map[string]any{}),
+				entry("e-person", "front_door", "person", "attribute", t0+20, map[string]any{"attribute": "face"}),
+				entry("e-person", "front_door", "person", "active", t0+50, map[string]any{}),
+				entry("e-person", "front_door", "person", "gone", t0+55, map[string]any{"box": []float64{0.9, 0.4, 0.08, 0.3}}),
+			},
+			"e-a1": {
+				entry("e-a1", "driveway", "person", "visible", ts(12.75), map[string]any{"box": []float64{0.4, 0.4, 0.1, 0.2}, "sub_label": []any{"Alex", 0.9}}),
+				entry("e-a1", "driveway", "person", "gone", ts(12.75)+8, map[string]any{"box": []float64{0.4, 0.05, 0.1, 0.1}}),
+			},
+		}
+		out := []map[string]any{}
+		for _, id := range strings.Split(r.URL.Query().Get("source_id"), ",") {
+			out = append(out, all[id]...)
+		}
+		w.Write(mustJSON(out))
 	case p == "/api/sub_labels":
 		w.Write([]byte(`["Alex", "ABC123"]`))
 	case strings.HasSuffix(p, "/latest.jpg") && (p == "/api/front_door/latest.jpg" || p == "/api/driveway/latest.jpg"):
@@ -327,7 +354,7 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) map[string]bool {
 func TestToolsAreListedReadOnly(t *testing.T) {
 	names := toolNames(t, start(t, config{}, nil))
 	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "get_events", "get_events_grid", "get_event_snapshot",
-		"get_system_status", "get_camera_frame", "last_seen", "get_alert_clip"}
+		"get_system_status", "get_camera_frame", "last_seen", "get_alert_clip", "get_event_timeline"}
 	for _, n := range want {
 		if !names[n] {
 			t.Errorf("missing %s", n)
@@ -1112,6 +1139,51 @@ func TestAlertClip(t *testing.T) {
 	} {
 		res := call(t, start(t, tc.cfg, nil), "get_alert_clip", map[string]any{"id": tc.id})
 		if !res.IsError || !strings.Contains(text(res), tc.want) {
+			t.Errorf("%s: got %s", tc.id, text(res))
+		}
+	}
+}
+
+func TestEventTimeline(t *testing.T) {
+	fake := &fakeFrigate{}
+	cs := start(t, config{}, fake)
+	res := call(t, cs, "get_event_timeline", map[string]any{"id": "e-person"})
+	want := "Timeline of person on front_door, today 12:00 (55s):\n" +
+		"- 12:00:00 person seen, near the left edge\n" +
+		"- 12:00:05 entered porch\n" +
+		"- 12:00:10 stopped moving\n" +
+		"- 12:00:20 face visible\n" +
+		"- 12:00:50 moving again (still for 40s)\n" +
+		"- 12:00:55 gone, last seen near the right edge\n"
+	if got := text(res); res.IsError || got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if q := lastRequest(fake, "/api/timeline"); q != "/api/timeline?limit=100&source_id=e-person" {
+		t.Errorf("request: %q", q)
+	}
+
+	// An alert: its objects' timelines.
+	res = call(t, cs, "get_event_timeline", map[string]any{"id": "r-alert1"})
+	if got := text(res); res.IsError || !strings.Contains(got, "Timeline of person on driveway, today 02:15 (8s):\n") ||
+		!strings.Contains(got, "- 02:15:00 person (Alex) seen, in the middle\n") ||
+		!strings.Contains(got, "- 02:15:08 gone, last seen near the top (far away)\n") {
+		t.Fatalf("alert: %s", got)
+	}
+
+	// No timeline left, unknown id, hidden camera.
+	res = call(t, cs, "get_event_timeline", map[string]any{"id": "e-car"})
+	if got := text(res); res.IsError || !strings.Contains(got, "Frigate has no timeline for e-car") {
+		t.Fatalf("empty: %s", got)
+	}
+	for _, tc := range []struct {
+		cfg config
+		id  string
+	}{
+		{config{}, "nope"},
+		{config{opt: tools.Options{Allowed: map[string]bool{"driveway": true}}}, "e-person"},
+	} {
+		res := call(t, start(t, tc.cfg, nil), "get_event_timeline", map[string]any{"id": tc.id})
+		if !res.IsError || !strings.Contains(text(res), fmt.Sprintf("no tracked object or alert with id %q", tc.id)) {
 			t.Errorf("%s: got %s", tc.id, text(res))
 		}
 	}

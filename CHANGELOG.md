@@ -26,6 +26,9 @@ All notable changes to this project are documented here. The format follows
   before to a few seconds after.
 - `last_seen`: when an object, or a recognized person or plate (`name`), was last seen, in one line
   with how long ago.
+- `get_event_timeline`: what a tracked object (or each object of an alert) did, from Frigate's
+  timeline, as text: when it appeared and where in the frame, zones entered, when it stood still
+  and for how long, faces or plates seen, and when it left.
 - `get_system_status`: cameras that are offline, poorly connected or skipping frames, detector speed,
   free disk space and the Frigate version (with any newer release), from `/api/stats`. Works with
   the viewer role.

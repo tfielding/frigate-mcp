@@ -30,6 +30,7 @@ Tested against Frigate 0.18.
 | `get_system_status` | none | Whether Frigate and the cameras are working: offline or poorly connected cameras, detector speed, free disk space, Frigate version |
 | `get_camera_frame` | `camera`, optional `at` (default now), optional `compare` | What the camera sees now or saw at a past time (JPEG); with `compare`, two times side by side in one picture |
 | `last_seen` | `label` and/or `name`, optional `camera`, `zone`, `within` | When that object or recognized person/plate was last seen, in one line |
+| `get_event_timeline` | `id` from `get_events`, `last_seen` or `get_alerts` | What the object did, step by step, as text: appeared, entered zones, stood still (how long), left |
 
 `since` takes `30m`, `6h`, `2d`, `1w`, `today` or `yesterday` (default 24 hours, at most 31 days).
 For a time of day, `from` and `to` take times the way people say them: `11:30`, `2pm`, `noon`,
@@ -112,6 +113,22 @@ Last car on driveway: today 14:00 (1 hour ago), for 6m00s. Zones: driveway. Id 1
 
 `name` looks for a recognized face or plate (Frigate's face or license plate recognition), matched
 loosely against the names Frigate knows; it searches the last 31 days unless `within` says less.
+
+`get_event_timeline` says what a tracked object did, from Frigate's timeline, as text, e.g. "did
+they come to the door or just walk past?". It takes an id from `get_events` or `last_seen`, or an
+alert's id from `get_alerts` (its objects, up to 5):
+
+```
+Timeline of person on front_door, today 14:12 (55s):
+- 14:12:03 person seen, near the left edge
+- 14:12:08 entered porch
+- 14:12:13 stopped moving
+- 14:12:23 face visible
+- 14:12:53 moving again (still for 40s)
+- 14:12:58 gone, last seen near the right edge
+```
+
+Frigate keeps the timeline only as long as the tracked object, so older ones may have none.
 
 If [GenAI review descriptions](https://docs.frigate.video/configuration/genai/genai_review) are configured in
 Frigate, each item also gets Frigate's own title, summary and threat level. Without them, the list

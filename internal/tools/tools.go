@@ -28,6 +28,7 @@ type Source interface {
 	LiveFrame(ctx context.Context, camera string, height int) ([]byte, error)
 	ReviewPreview(ctx context.Context, id string) ([]byte, error)
 	SubLabels(ctx context.Context) ([]string, error)
+	Timeline(ctx context.Context, ids []string, limit int) ([]frigate.TimelineEntry, error)
 	Stats(ctx context.Context) (*frigate.Stats, error)
 }
 
@@ -169,6 +170,13 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 			"or \"when did Alex last come home?\".",
 		Annotations: readOnly("Last seen"),
 	}, t.lastSeen)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_event_timeline",
+		Description: "What a tracked object did, step by step, as text: when it appeared, which zones it entered, when it " +
+			"stood still and for how long, and when it left. Takes an id from get_events, last_seen or get_alerts. Use " +
+			"for \"did they come to the door or just walk past?\" or \"how long was the car there?\".",
+		Annotations: readOnly("Event timeline"),
+	}, t.eventTimeline)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_system_status",

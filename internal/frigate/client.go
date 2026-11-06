@@ -327,6 +327,33 @@ func (c *Client) LiveFrame(ctx context.Context, camera string, height int) ([]by
 	return c.image(ctx, "/api/"+url.PathEscape(camera)+"/latest.jpg", q)
 }
 
+// TimelineEntry is one thing a tracked object did: became visible, entered a zone, stopped or
+// started moving, showed an attribute (face, plate), or left.
+type TimelineEntry struct {
+	Timestamp Time   `json:"timestamp"`
+	Camera    string `json:"camera"`
+	SourceID  string `json:"source_id"`  // the tracked object's id
+	ClassType string `json:"class_type"` // visible, entered_zone, stationary, active, attribute, gone, heard, external
+	Data      struct {
+		Box       []float64 `json:"box"` // x, y, width, height as fractions of the frame
+		Label     string    `json:"label"`
+		SubLabel  SubLabel  `json:"sub_label"`
+		Zones     []string  `json:"zones"`
+		Attribute any       `json:"attribute"` // a name or a list of names (face, license_plate, ...)
+	} `json:"data"`
+}
+
+// Timeline returns what the given tracked objects did, oldest first.
+func (c *Client) Timeline(ctx context.Context, ids []string, limit int) ([]TimelineEntry, error) {
+	q := url.Values{"source_id": {strings.Join(ids, ",")}, "limit": {strconv.Itoa(limit)}}
+	var out []TimelineEntry
+	if err := c.getJSON(ctx, "/api/timeline", q, 4<<20, &out); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Timestamp.Before(out[j].Timestamp.Time) })
+	return out, nil
+}
+
 // SubLabels returns the recognized names Frigate knows (faces, plates and the like).
 func (c *Client) SubLabels(ctx context.Context) ([]string, error) {
 	var out []string
