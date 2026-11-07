@@ -77,17 +77,26 @@ func (t *Toolset) eventTimeline(ctx context.Context, _ *mcp.CallToolRequest, in 
 	if err != nil {
 		return nil, nil, err
 	}
+	s, err := t.timelineText(ctx, "get_event_timeline", id, o)
+	if err != nil {
+		return nil, nil, err
+	}
+	return text(s), nil, nil
+}
+
+// timelineText is the timeline of o's objects, as get_event_timeline gives it.
+func (t *Toolset) timelineText(ctx context.Context, tool, id string, o objects) (string, error) {
 	ids, camera, what, start, single := o.ids, o.camera, o.what, o.start, o.single
 	entries, err := t.src.Timeline(ctx, ids, 100*len(ids))
 	if err != nil {
-		slog.Error("get_event_timeline", "id", id, "err", err)
-		return nil, nil, unavailable(err)
+		slog.Error(tool, "id", id, "err", err)
+		return "", unavailable(err)
 	}
 	now := t.opt.Now().In(t.opt.Location)
-	slog.Info("get_event_timeline", "id", id, "objects", len(ids), "entries", len(entries))
+	slog.Info(tool, "id", id, "objects", len(ids), "entries", len(entries))
 	if len(entries) == 0 {
-		return text(fmt.Sprintf("Frigate has no timeline for %s (%s on %s at %s); it may have been cleaned up already.\n",
-			id, what, camera, clock(start, now))), nil, nil
+		return fmt.Sprintf("Frigate has no timeline for %s (%s on %s at %s); it may have been cleaned up already.\n",
+			id, what, camera, clock(start, now)), nil
 	}
 	// Each object's top score: Frigate's best confidence over its whole life.
 	scores := map[string]float64{}
@@ -100,7 +109,7 @@ func (t *Toolset) eventTimeline(ctx context.Context, _ *mcp.CallToolRequest, in 
 			}
 		}
 	}
-	return text(describeTimeline(entries, camera, what, len(ids) > 1, scores, now)), nil, nil
+	return describeTimeline(entries, camera, what, len(ids) > 1, scores, now), nil
 }
 
 // objectFacts sums up one object from its timeline, for telling a real one from a false

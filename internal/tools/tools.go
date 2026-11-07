@@ -188,6 +188,14 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 			"an alert, its first object). Needs recordings.",
 		Annotations: readOnly("Event frames"),
 	}, t.eventFrames)
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "review_alert",
+		Description: "Everything needed to judge whether an alert or tracked object was real, in one call: the timeline " +
+			"of get_event_timeline (top confidence, whether it came into its zone from outside, whether it moved, step by " +
+			"step) and the picture of get_event_frames (the object at up to four moments, zoomed in). Use it first when " +
+			"checking an alert, instead of calling those two. Takes an id from get_alerts, get_events or last_seen.",
+		Annotations: readOnly("Review alert"),
+	}, t.reviewAlert)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_system_status",

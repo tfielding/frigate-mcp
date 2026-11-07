@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `review_alert`: the timeline of `get_event_timeline` and the picture of `get_event_frames` in one
+  call, for checking whether an alert was real with fewer model rounds. Without recordings, it still
+  returns the timeline and says why there's no picture.
 - `-healthcheck` flag for Docker's `healthcheck:`: checks the running server's `/healthz` from inside the
   container (the image has no shell or curl) and exits 0 when healthy. Lets other services use
   `depends_on` with `condition: service_healthy`.

@@ -364,7 +364,7 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) map[string]bool {
 func TestToolsAreListedReadOnly(t *testing.T) {
 	names := toolNames(t, start(t, config{}, nil))
 	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "get_events", "get_events_grid", "get_event_snapshot",
-		"get_system_status", "get_camera_frame", "last_seen", "get_alert_clip", "get_event_timeline", "get_event_frames"}
+		"get_system_status", "get_camera_frame", "last_seen", "get_alert_clip", "get_event_timeline", "get_event_frames", "review_alert"}
 	for _, n := range want {
 		if !names[n] {
 			t.Errorf("missing %s", n)
@@ -1285,5 +1285,34 @@ func TestEventFrames(t *testing.T) {
 	res = call(t, cs, "get_event_frames", map[string]any{"id": "e-car"})
 	if !res.IsError || !strings.Contains(text(res), "no timeline for e-car") {
 		t.Errorf("no timeline: %s", text(res))
+	}
+}
+
+func TestReviewAlert(t *testing.T) {
+	fake := &fakeFrigate{}
+	cs := start(t, config{}, fake)
+	res := call(t, cs, "review_alert", map[string]any{"id": "e-person"})
+	got := text(res)
+	if res.IsError || !strings.HasPrefix(got, "Timeline of person on front_door, today 12:00 (55s):\n"+
+		"Frigate's top confidence 86%; first seen outside its zones, entered porch after 5s; moved across the frame.\n") ||
+		!strings.Contains(got, "- 12:00:55 gone, last seen near the right edge\n\n"+
+			"Person on front_door at 4 moments, from the recordings") {
+		t.Fatalf("got:\n%s", got)
+	}
+	if img := decodeJPEG(t, imageOf(res)); img.Bounds().Dx() < 200 {
+		t.Errorf("grid is %v", img.Bounds())
+	}
+
+	// Without recordings: the facts, and why there's no picture.
+	res = call(t, start(t, config{}, &fakeFrigate{noRecs: true}), "review_alert", map[string]any{"id": "e-person"})
+	if got := text(res); res.IsError || !strings.Contains(got, "top confidence 86%") ||
+		!strings.Contains(got, "\n\nNo picture: no recorded frames for e-person on front_door") {
+		t.Errorf("no recordings: %s", got)
+	}
+
+	// Unknown id.
+	res = call(t, cs, "review_alert", map[string]any{"id": "nope"})
+	if !res.IsError || !strings.Contains(text(res), `no tracked object or alert with id "nope"`) {
+		t.Errorf("unknown: %s", text(res))
 	}
 }

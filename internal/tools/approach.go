@@ -31,14 +31,24 @@ func (t *Toolset) eventFrames(ctx context.Context, _ *mcp.CallToolRequest, in ID
 	if err != nil {
 		return nil, nil, err
 	}
+	caption, jpg, err := t.framesPicture(ctx, "get_event_frames", in.ID, o)
+	if err != nil {
+		return nil, nil, err
+	}
+	return imageResult(caption, jpg), nil, nil
+}
+
+// framesPicture is the picture of o's first object at a few moments, and its caption, as
+// get_event_frames gives them.
+func (t *Toolset) framesPicture(ctx context.Context, tool, id string, o objects) (string, []byte, error) {
 	obj := o.ids[0] // an alert's first object
 	entries, err := t.src.Timeline(ctx, []string{obj}, 100)
 	if err != nil {
-		slog.Error("get_event_frames", "id", in.ID, "err", err)
-		return nil, nil, unavailable(err)
+		slog.Error(tool, "id", id, "err", err)
+		return "", nil, unavailable(err)
 	}
 	if len(entries) == 0 {
-		return nil, nil, fmt.Errorf("no timeline for %s in Frigate any more, so the moments to show aren't known; try get_alert_snapshot", in.ID)
+		return "", nil, fmt.Errorf("no timeline for %s in Frigate any more, so the moments to show aren't known; try get_alert_snapshot", id)
 	}
 	shots := pickShots(entries)
 	now := t.opt.Now().In(t.opt.Location)
@@ -63,24 +73,24 @@ func (t *Toolset) eventFrames(ctx context.Context, _ *mcp.CallToolRequest, in ID
 			pics[i], err = jpeg.Decode(bytes.NewReader(jpg))
 		}
 		if err != nil {
-			slog.Warn("get_event_frames: no picture", "moment", i+1, "err", err)
+			slog.Warn(tool+": no picture", "moment", i+1, "err", err)
 			missing++
 			continue
 		}
 		pics[i] = zoom(pics[i], s.box)
 	}
 	if missing == len(shots) {
-		return nil, nil, fmt.Errorf("no recorded frames for %s on %s; recordings may be off or already deleted. Try get_alert_snapshot", in.ID, o.camera)
+		return "", nil, fmt.Errorf("no recorded frames for %s on %s; recordings may be off or already deleted. Try get_alert_snapshot", id, o.camera)
 	}
 	if missing > 0 {
 		fmt.Fprintf(&b, "%d of the moments have no recorded frame.\n", missing)
 	}
 	jpg, err := l.render(pics, labels)
 	if err != nil {
-		return nil, nil, err
+		return "", nil, err
 	}
-	slog.Info("get_event_frames", "id", in.ID, "object", obj, "moments", len(shots), "missing", missing, "bytes", len(jpg))
-	return imageResult(strings.TrimSpace(b.String()), jpg), nil, nil
+	slog.Info(tool, "id", id, "object", obj, "moments", len(shots), "missing", missing, "bytes", len(jpg))
+	return strings.TrimSpace(b.String()), jpg, nil
 }
 
 // pickShots chooses up to four moments: first seen, entering a zone, the middle of the stay,
