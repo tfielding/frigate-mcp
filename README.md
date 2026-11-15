@@ -8,7 +8,7 @@ questions about what your cameras saw, using [Frigate](https://frigate.video) NV
 today?", "show me that one", "when was the last car in the driveway?".
 
 ```
-MCP client (e.g. signal-ollama) ⇄ frigate-mcp ⇄ Frigate
+MCP client (e.g. Llamero) ⇄ frigate-mcp ⇄ Frigate
         POST /mcp (Streamable HTTP)     /api/review, /api/events, snapshots
 ```
 
@@ -66,7 +66,7 @@ are off it falls back to the snapshot of an object in it.
 started to 8 seconds after it ended, so you see what happened rather than one moment. It's made from
 Frigate's low-resolution preview recordings, so it's small; if they don't cover the item, the answer
 says so. Vision models only look at still pictures, so the clip is for you (MCP clients that
-forward images, like signal-ollama, send it as an attachment).
+forward images, like Llamero, send it as an attachment).
 
 `get_alerts_grid` puts those pictures for several items into one image, each tile labelled with its
 number, time and what was seen (e.g. `3) 14:12 (person, car)`), and the camera name too with

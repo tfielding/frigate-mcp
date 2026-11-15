@@ -17,7 +17,7 @@ services:
       # - CAMERAS=driveway,front_door       # limit which cameras are exposed (default: all)
       # - SNAPSHOT_HEIGHT=720               # image height; 0 = native
       # - AUTH_TOKEN=...                    # require "Authorization: Bearer <token>" from MCP clients
-    # No ports needed if MCP clients (e.g. signal-ollama) are on the same Docker network:
+    # No ports needed if MCP clients (e.g. Llamero) are on the same Docker network:
     # they connect to http://frigate-mcp:8091/mcp
     # ports:
     #   - "127.0.0.1:8091:8091"
