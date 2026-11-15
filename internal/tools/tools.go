@@ -198,6 +198,15 @@ func Register(ctx context.Context, s *mcp.Server, src Source, opt Options) *Tool
 	}, t.reviewAlert)
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name: "daily_digest",
+		Description: "Text only, no pictures. One-call summary of a period: alert and detection counts, tracked objects by " +
+			"kind, a breakdown by camera, the busiest hour, recognized names and plates, and the few alerts most worth a " +
+			"look (overnight alerts, or ones Frigate rated suspicious or critical). Use first for \"what did I miss " +
+			"overnight?\" or \"give me a rundown of today\"; then get_alerts for the full list or review_alert to check one.",
+		Annotations: readOnly("Daily digest"),
+	}, t.dailyDigest)
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_system_status",
 		Description: "Check whether Frigate and the cameras are working: cameras that are offline or have a poor " +
 			"connection, detector speed, free disk space, and the Frigate version. Use for questions like " +

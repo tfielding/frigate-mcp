@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `daily_digest`: a one-call summary of a period (counts of alerts and detections, tracked objects by
+  kind, a breakdown by camera, the busiest hour, recognized names and plates, and the alerts most worth a
+  look: overnight ones, or ones Frigate rated suspicious or critical), for questions like "what did I
+  miss overnight?".
 - `review_alert`: the timeline of `get_event_timeline` and the picture of `get_event_frames` in one
   call, for checking whether an alert was real with fewer model rounds. Without recordings, it still
   returns the timeline and says why there's no picture.

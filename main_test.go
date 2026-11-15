@@ -364,7 +364,7 @@ func toolNames(t *testing.T, cs *mcp.ClientSession) map[string]bool {
 func TestToolsAreListedReadOnly(t *testing.T) {
 	names := toolNames(t, start(t, config{}, nil))
 	want := []string{"get_alerts", "get_alerts_grid", "get_alert_snapshot", "get_events", "get_events_grid", "get_event_snapshot",
-		"get_system_status", "get_camera_frame", "last_seen", "get_alert_clip", "get_event_timeline", "get_event_frames", "review_alert"}
+		"get_system_status", "get_camera_frame", "last_seen", "get_alert_clip", "get_event_timeline", "get_event_frames", "review_alert", "daily_digest"}
 	for _, n := range want {
 		if !names[n] {
 			t.Errorf("missing %s", n)

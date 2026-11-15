@@ -33,6 +33,7 @@ Tested against Frigate 0.18.
 | `get_event_timeline` | `id` from `get_events`, `last_seen` or `get_alerts` | What the object did, step by step, as text: appeared, entered zones, stood still (how long), left; with its top confidence and whether it moved |
 | `get_event_frames` | `id` from `get_events`, `last_seen` or `get_alerts` | The object at up to 4 moments of its visit (first seen, entered a zone, while there, last seen), zoomed in, in one picture |
 | `review_alert` | `id` from `get_alerts`, `get_events` or `last_seen` | Both of the above in one call: the timeline with its facts line, and the frames picture. For checking whether an alert was real |
+| `daily_digest` | optional `camera`, `since`, `from`, `to` | A text summary of a period: alert and detection counts, tracked objects by kind, a breakdown by camera, the busiest hour, recognized names and plates, and the few alerts most worth a look |
 
 `since` takes `30m`, `6h`, `2d`, `1w`, `today` or `yesterday` (default 24 hours, at most 31 days).
 For a time of day, `from` and `to` take times the way people say them: `11:30`, `2pm`, `noon`,
@@ -148,6 +149,32 @@ frame, which a single snapshot can't show. It needs recordings, and uses an aler
 meant for automated alert checks, where every round trip to the model adds seconds: one tool call
 instead of two or more. Without recordings, it still returns the timeline and says why there's no
 picture.
+
+`daily_digest` sums up a period in one answer, for "what did I miss overnight?" or "give me a rundown
+of today": how many alerts and detections, the tracked objects by kind, a breakdown by camera (busiest
+first, quiet cameras named), the busiest hour, recognized names and plates, and the few alerts most
+worth a look: alerts that started overnight (23:00 to 06:00 in `TZ`), and anything Frigate's GenAI
+review rated suspicious or critical. Everything else is counted, not listed. It takes the same
+`camera`, `since`, `from` and `to` as `get_alerts`. For a period busier than 1000 tracked objects the
+object counts say "at least".
+
+```
+Digest for last 24 hours, all cameras. Times are EST.
+Alerts: 3, detections: 12.
+Tracked objects: 41 (car 22, person 17, dog 2).
+By camera, busiest first:
+- driveway: 1 alert, 9 detections; tracked: car 22, person 3
+- front_door: 2 alerts, 3 detections; tracked: person 14, dog 2
+No activity: backyard.
+Busiest hour: today 14:00-15:00 (9 objects).
+Recognized: Alex (2).
+Plates: ABC123 (4).
+Worth a look, most notable first:
+- today 02:14 (1m05s), driveway: alert, person; zones: driveway; id 1761884040.1-ef34gh
+  Why: overnight.
+Use review_alert with an id to check whether one was real, or get_alert_snapshot to see it.
+For the full lists, use get_alerts and get_events.
+```
 
 If [GenAI review descriptions](https://docs.frigate.video/configuration/genai/genai_review) are configured in
 Frigate, each item also gets Frigate's own title, summary and threat level. Without them, the list
